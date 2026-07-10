@@ -1,0 +1,16 @@
+{
+  "name": "nera-treinamento-backend",
+  "version": "1.0.0",
+  "description": "Backend (Node.js/Express na EC2) do treinamento gamificado Nera",
+  "private": true,
+  "main": "src/server.js",
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.11.5",
+    "bcryptjs": "^2.4.3",
+    "@aws-sdk/client-ses": "^3.600.0"
+  },
+  "scripts": {
+    "start": "node src/server.js"
+  }
+}
