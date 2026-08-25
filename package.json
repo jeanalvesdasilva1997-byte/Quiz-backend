@@ -1,11 +1,10 @@
 {
   "name": "conforto-habitat-backend",
   "version": "1.0.0",
-  "description": "Backend (Node.js/Express na EC2) do treinamento gamificado Conversas de Conforto Habitat by Cebrace",
+  "description": "Backend (Node.js/Express) do treinamento gamificado Conversas de Conforto Habitat by Cebrace",
   "private": true,
   "main": "src/server.js",
   "dependencies": {
-    "@aws-sdk/client-ses": "^3.600.0",
     "bcryptjs": "^2.4.3",
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",

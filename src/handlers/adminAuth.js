@@ -72,7 +72,7 @@ async function solicitarResetSenha(event) {
       const tokenHash = await auth.hash(token);
       const expiraEm = new Date(Date.now() + 30 * 60 * 1000); // 30 minutos
       await db.query(`INSERT INTO admin_reset_senha (admin_id, token_hash, expira_em) VALUES ($1, $2, $3)`, [admin.id, tokenHash, expiraEm]);
-      const link = `${process.env.FRONTEND_ORIGIN}/redefinir-senha?token=${token}&email=${encodeURIComponent(admin.email)}`;
+      const link = `${process.env.ADMIN_FRONTEND_URL}/redefinir-senha?token=${token}&email=${encodeURIComponent(admin.email)}`;
       await email.enviarConviteAdmin(admin.email, link); // reaproveita o mesmo remetente/estrutura de e-mail transacional
     }
     return http.ok({ mensagem: "Se o e-mail existir, um link de redefinição foi enviado." });

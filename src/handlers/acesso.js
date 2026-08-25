@@ -50,7 +50,11 @@ async function convidar(event) {
     );
 
     const tokenAtivacao = auth.gerarTokenOpaco();
-    const link = `${process.env.FRONTEND_ORIGIN}/ativar-convite?token=${tokenAtivacao}&email=${encodeURIComponent(emailConvidado)}`;
+    // ADMIN_FRONTEND_URL, não FRONTEND_ORIGIN — este último é a lista de
+    // origens permitidas no CORS (pode ter mais de um domínio, separado
+    // por vírgula, incluindo o front do participante), e não dá pra
+    // montar um link clicável a partir disso.
+    const link = `${process.env.ADMIN_FRONTEND_URL}/ativar-convite?token=${tokenAtivacao}&email=${encodeURIComponent(emailConvidado)}`;
     await email.enviarConviteAdmin(emailConvidado, link);
 
     await db.query(`INSERT INTO log_auditoria (admin_id, admin_nome_snapshot, acao, alvo) VALUES ($1, $2, $3, $4)`, [

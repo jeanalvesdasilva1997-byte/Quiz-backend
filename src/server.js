@@ -1,14 +1,16 @@
 // =====================================================================
-// server.js — Servidor Express para EC2 (adapta os handlers Lambda
-// existentes, sem reescrever a lógica de negócio de cada um).
+// server.js — App Express (adapta os handlers Lambda existentes, sem
+// reescrever a lógica de negócio de cada um). Roda tanto localmente/EC2
+// (node src/server.js escuta uma porta) quanto no Vercel (api/index.js
+// importa o `app` exportado aqui e o Vercel chama como função serverless,
+// sem precisar de app.listen — ver bloco no fim do arquivo).
 // =====================================================================
 // Por que esse arquivo existe: os handlers em src/handlers/*.js foram
 // escritos no formato Lambda + API Gateway (event) => {statusCode,
-// headers, body}. Depois de migrar de Lambda/API Gateway para uma
-// instância EC2 única (decisão tomada por custo), a forma mais simples
-// de reaproveitar 100% da lógica já escrita é "traduzir" cada
-// requisição HTTP normal (Express req/res) para o formato de "event"
-// que os handlers já esperam, e traduzir o retorno de volta.
+// headers, body}. A forma mais simples de reaproveitar 100% da lógica já
+// escrita, seja atrás de EC2/Nginx ou de função serverless do Vercel, é
+// "traduzir" cada requisição HTTP normal (Express req/res) para o formato
+// de "event" que os handlers já esperam, e traduzir o retorno de volta.
 //
 // Nenhuma regra de negócio muda — só a camada de entrada/saída.
 // =====================================================================
@@ -178,7 +180,15 @@ app.get("/admin/log-auditoria", adaptar(acesso.logAuditoria));
 // Healthcheck simples — útil para o smoke test do dia do evento
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 
-const PORTA = process.env.PORT || 3000;
-app.listen(PORTA, () => {
-  console.log(`Servidor rodando na porta ${PORTA}`);
-});
+// No Vercel, quem recebe a requisição é a função serverless (api/index.js),
+// não este processo — chamar app.listen() ali não faz sentido (não existe
+// porta pra abrir) e o próprio Vercel seta a env var VERCEL nesse ambiente.
+// Local/EC2 continuam subindo normalmente com `node src/server.js`.
+if (!process.env.VERCEL) {
+  const PORTA = process.env.PORT || 3000;
+  app.listen(PORTA, () => {
+    console.log(`Servidor rodando na porta ${PORTA}`);
+  });
+}
+
+module.exports = app;
