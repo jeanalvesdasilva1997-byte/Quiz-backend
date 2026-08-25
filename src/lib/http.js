@@ -2,15 +2,13 @@
 // lib/http.js — Helpers de resposta para Lambda + API Gateway (proxy)
 // =====================================================================
 
-const ORIGEM_PERMITIDA = process.env.FRONTEND_ORIGIN || "https://treinamento.neratreinamento.com.br";
-
 function jsonResponse(statusCode, body, extraHeaders = {}) {
   return {
     statusCode,
     headers: {
       "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": ORIGEM_PERMITIDA,
-      "Access-Control-Allow-Credentials": "true", // necessário para cookies httpOnly cross-origin
+      // CORS (Access-Control-Allow-Origin/Credentials) é aplicado centralmente
+      // pelo middleware em server.js, com base na origem da requisição.
       ...extraHeaders,
     },
     body: JSON.stringify(body),

@@ -13,10 +13,14 @@
 // Nenhuma regra de negócio muda — só a camada de entrada/saída.
 // =====================================================================
 
+require("dotenv").config();
+
 const express = require("express");
+const rateLimit = require("express-rate-limit");
 
 const participanteAuth = require("./handlers/participanteAuth");
 const participanteJornada = require("./handlers/participanteJornada");
+const quizAoVivo = require("./handlers/quizAoVivo");
 const adminAuth = require("./handlers/adminAuth");
 const turmas = require("./handlers/turmas");
 const participantesAdmin = require("./handlers/participantesAdmin");
@@ -26,19 +30,59 @@ const relatorio = require("./handlers/relatorio");
 const acesso = require("./handlers/acesso");
 
 const app = express();
+
+// Nginx faz proxy reverso na frente do Express (1 salto) — sem isso,
+// express-rate-limit enxergaria sempre o IP do Nginx e trataria todo
+// mundo atrás dele como um usuário só.
+app.set("trust proxy", 1);
+
 app.use(express.json());
 
-const ORIGEM_PERMITIDA = process.env.FRONTEND_ORIGIN || "https://treinamento.neratreinamento.com.br";
+const ORIGENS_PERMITIDAS = (process.env.FRONTEND_ORIGIN || "https://treinamento.conforto-habitat.com.br")
+  .split(",")
+  .map((o) => o.trim());
 
 // CORS + cookies cross-origin (frontend e backend em subdomínios diferentes)
 app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", ORIGEM_PERMITIDA);
+  if (ORIGENS_PERMITIDAS.includes(req.headers.origin)) {
+    res.header("Access-Control-Allow-Origin", req.headers.origin);
+  }
   res.header("Access-Control-Allow-Credentials", "true");
   res.header("Access-Control-Allow-Headers", "Content-Type");
   res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
+
+// -----------------------------------------------------------------
+// Rate limiting — dois níveis:
+// - geral: barra abuso/DoS grosseiro, mas generoso o bastante pra não
+//   atrapalhar o polling normal do quiz ao vivo (participante e admin
+//   consultam o estado a cada 2-4s).
+// - login: bem mais estrito, só nas rotas de autenticação/senha, que
+//   são o alvo real de força bruta.
+// -----------------------------------------------------------------
+const limitadorGeral = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    res.status(429).json({ erro: "Muitas requisições. Aguarde um instante e tente novamente." });
+  },
+});
+
+const limitadorLogin = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    res.status(429).json({ erro: "Muitas tentativas. Aguarde alguns minutos antes de tentar novamente." });
+  },
+});
+
+app.use(limitadorGeral);
 
 // -----------------------------------------------------------------
 // Adaptador: transforma (req, res) em chamada ao handler no formato
@@ -83,22 +127,29 @@ function adaptar(handler) {
 // =====================================================================
 
 // ---------------- Participante ----------------
-app.post("/participante/solicitar-codigo", adaptar(participanteAuth.solicitarCodigo));
-app.post("/participante/confirmar-codigo", adaptar(participanteAuth.confirmarCodigo));
+app.post("/participante/verificar-email", limitadorLogin, adaptar(participanteAuth.verificarEmail));
+app.post("/participante/definir-senha", limitadorLogin, adaptar(participanteAuth.definirSenha));
+app.post("/participante/login", limitadorLogin, adaptar(participanteAuth.login));
 app.get("/participante/painel", adaptar(participanteJornada.painel));
-app.get("/participante/questao-atual", adaptar(participanteJornada.questaoAtual));
-app.post("/participante/responder", adaptar(participanteJornada.responder));
+app.get("/participante/quiz-estado", adaptar(quizAoVivo.estadoParticipante));
+app.post("/participante/responder", adaptar(quizAoVivo.responder));
 
 // ---------------- Admin — autenticação ----------------
-app.post("/admin/login", adaptar(adminAuth.login));
-app.post("/admin/confirmar-2fa", adaptar(adminAuth.confirmar2fa));
-app.post("/admin/solicitar-reset-senha", adaptar(adminAuth.solicitarResetSenha));
-app.post("/admin/redefinir-senha", adaptar(adminAuth.redefinirSenha));
+app.post("/admin/login", limitadorLogin, adaptar(adminAuth.login));
+app.post("/admin/solicitar-reset-senha", limitadorLogin, adaptar(adminAuth.solicitarResetSenha));
+app.post("/admin/redefinir-senha", limitadorLogin, adaptar(adminAuth.redefinirSenha));
 
 // ---------------- Admin — turmas ----------------
 app.get("/admin/turmas", adaptar(turmas.listar));
 app.post("/admin/turmas/conferir", adaptar(turmas.conferir));
 app.post("/admin/turmas", adaptar(turmas.criar));
+app.post("/admin/turmas/:id/encerrar", adaptar(turmas.encerrar));
+
+// ---------------- Admin — quiz ao vivo (condução da prova) ----------------
+app.get("/admin/turmas/:id/quiz", adaptar(quizAoVivo.estadoAoVivo));
+app.post("/admin/turmas/:id/quiz/iniciar-fase1", adaptar(quizAoVivo.iniciarFase1));
+app.post("/admin/turmas/:id/quiz/proxima", adaptar(quizAoVivo.proximaPergunta));
+app.post("/admin/turmas/:id/quiz/liberar-fase2", adaptar(quizAoVivo.liberarFase2));
 
 // ---------------- Admin — cadastro no dia / liberação manual ----------------
 app.post("/admin/cadastro-no-dia", adaptar(participantesAdmin.cadastroNoDia));
@@ -112,11 +163,11 @@ app.get("/admin/monitoramento/:turmaId", adaptar(monitoramento.monitorar));
 app.get("/admin/conteudo", adaptar(conteudo.listar));
 app.post("/admin/conteudo", adaptar(conteudo.criar));
 app.put("/admin/conteudo/:id", adaptar(conteudo.editar));
+app.post("/admin/modulos", adaptar(conteudo.criarModulo));
 
 // ---------------- Admin — relatório ----------------
 app.get("/admin/relatorio/:turmaId", adaptar(relatorio.gerar));
-app.get("/admin/relatorio/:turmaId/csv", adaptar(relatorio.exportarCsv));
-app.post("/admin/relatorio/:turmaId/enviar-rh", adaptar(relatorio.enviarAoRh));
+app.get("/admin/relatorio/:turmaId/xlsx", adaptar(relatorio.exportarXlsx));
 
 // ---------------- Admin — gestão de acesso (Owner) ----------------
 app.get("/admin/equipe", adaptar(acesso.listarEquipe));

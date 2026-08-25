@@ -22,6 +22,14 @@ function getPool() {
       max: 3, // Lambda: manter baixo, cada execução concorrente abre seu próprio pool
       idleTimeoutMillis: 30000,
     });
+
+    // Sem esse listener, um cliente ocioso derrubado pelo lado do banco
+    // (comportamento normal do Neon) vira uma exceção não tratada e
+    // derruba o processo inteiro — não é erro de query, é erro de fundo
+    // do pool, então só logamos e seguimos.
+    pool.on("error", (err) => {
+      console.error("Erro inesperado em cliente ocioso do pool do Postgres:", err.message);
+    });
   }
   return pool;
 }

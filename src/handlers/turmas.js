@@ -100,7 +100,7 @@ async function criar(event) {
         await client.query(
           `INSERT INTO participantes (turma_id, nome, email, empresa, cnpj, origem, status)
            VALUES ($1, $2, $3, $4, $5, 'lista', 'nao_iniciado')`,
-          [novaTurma.id, p.nome, p.email, p.empresa, p.cnpj]
+          [novaTurma.id, (p.nome || "").trim(), (p.email || "").trim(), (p.empresa || "").trim() || null, (p.cnpj || "").trim() || null]
         );
       }
       return novaTurma;
@@ -116,4 +116,35 @@ async function criar(event) {
   }
 }
 
-module.exports = { listar, conferir, criar };
+// POST /admin/turmas/:id/encerrar
+// Fecha a turma: impede o admin de continuar conduzindo o quiz ao vivo
+// (a turma some da lista de turmas ativas) e trava novas respostas —
+// mas o participante continua conseguindo entrar e ver o pódio final
+// por 12h a partir de janela_fim (login aceita turma 'ativa' ou
+// 'encerrada' dentro da janela — ver participanteAuth.js e sessao.js).
+async function encerrar(event) {
+  try {
+    const admin = await sessao.adminAutenticado(event);
+    if (!admin) return http.unauthorized();
+
+    const turmaId = event.pathParameters && event.pathParameters.id;
+    const turmaRes = await db.query(`SELECT id, nome, status FROM turmas WHERE id = $1`, [turmaId]);
+    if (turmaRes.rows.length === 0) return http.notFound("Turma não encontrada.");
+    if (turmaRes.rows[0].status === "encerrada") return http.conflict("Turma já está encerrada.");
+
+    const res = await db.query(
+      `UPDATE turmas SET status = 'encerrada', janela_fim = now() WHERE id = $1 RETURNING *`,
+      [turmaId]
+    );
+
+    await db.query(`INSERT INTO log_auditoria (admin_id, admin_nome_snapshot, acao, alvo) VALUES ($1, $2, $3, $4)`, [
+      admin.admin_id, admin.nome, "Encerrou a turma", turmaRes.rows[0].nome,
+    ]);
+
+    return http.ok({ turma: res.rows[0] });
+  } catch (err) {
+    return http.serverError(err);
+  }
+}
+
+module.exports = { listar, conferir, criar, encerrar };

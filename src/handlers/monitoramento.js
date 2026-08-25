@@ -4,13 +4,12 @@
 // Mecanismo: consulta periódica (polling) feita pelo front-end a cada
 // 5-10s — este endpoint só devolve o estado atual, sem manter conexão
 // persistente (decisão já registrada na Seção 10 da arquitetura).
-// Só lista turmas com status 'ativa', por decisão do time Nera.
+// Só lista turmas com status 'ativa', por decisão da equipe Cebrace.
 // =====================================================================
 
 const db = require("../lib/db");
 const http = require("../lib/http");
 const sessao = require("../lib/sessao");
-const gam = require("../lib/gamificacao");
 
 // GET /admin/turmas-ativas   (para popular o seletor do Monitoramento)
 async function turmasAtivas(event) {
@@ -39,8 +38,7 @@ async function monitorar(event) {
     }
 
     const participantesRes = await db.query(
-      `SELECT nome, email, empresa, origem, status, respondidas, xp_total, melhor_streak,
-              questao_iniciada_em
+      `SELECT nome, email, empresa, origem, status, xp_fase1, xp_fase2, melhor_streak
        FROM participantes WHERE turma_id = $1 ORDER BY nome`,
       [turmaId]
     );
@@ -50,9 +48,8 @@ async function monitorar(event) {
       empresa: p.empresa,
       origem: p.origem,
       status: p.status,
-      moduloAtual: gam.moduloAtual(p.respondidas),
-      progresso: gam.progressoPercentual(p.respondidas),
-      xpTotal: p.xp_total,
+      xpFase1: p.xp_fase1,
+      xpFase2: p.xp_fase2,
       melhorStreak: p.melhor_streak,
       // alerta: convite pendente há mais de 10 min é calculado aqui, não na tela
       alertaConvitePendente: p.status === "convite_pendente",

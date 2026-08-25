@@ -1,14 +1,17 @@
 {
-  "name": "nera-treinamento-backend",
+  "name": "conforto-habitat-backend",
   "version": "1.0.0",
-  "description": "Backend (Node.js/Express na EC2) do treinamento gamificado Nera",
+  "description": "Backend (Node.js/Express na EC2) do treinamento gamificado Conversas de Conforto Habitat by Cebrace",
   "private": true,
   "main": "src/server.js",
   "dependencies": {
-    "express": "^4.19.2",
-    "pg": "^8.11.5",
+    "@aws-sdk/client-ses": "^3.600.0",
     "bcryptjs": "^2.4.3",
-    "@aws-sdk/client-ses": "^3.600.0"
+    "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
+    "express": "^4.19.2",
+    "express-rate-limit": "^8.6.2",
+    "pg": "^8.11.5"
   },
   "scripts": {
     "start": "node src/server.js"

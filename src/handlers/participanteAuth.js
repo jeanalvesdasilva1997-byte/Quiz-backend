@@ -1,113 +1,124 @@
 // =====================================================================
-// handlers/participanteAuth.js — Login do participante (e-mail + OTP)
+// handlers/participanteAuth.js — Login do participante (e-mail + senha)
+// =====================================================================
+// O e-mail pré-cadastrado pelo organizador (lista da turma ou cadastro
+// no dia) já é a barreira de acesso — decisão explícita da equipe
+// Cebrace de dispensar código por e-mail. No primeiro acesso, a própria
+// pessoa cria a senha; ninguém, nem o admin, chega a vê-la.
 // =====================================================================
 
 const db = require("../lib/db");
 const auth = require("../lib/auth");
-const email = require("../lib/email");
 const http = require("../lib/http");
 
-// POST /participante/solicitar-codigo   { email }
-// Sempre responde 200 com a mesma mensagem genérica — não revela se o
-// e-mail existe na base, para não permitir enumerar participantes.
-async function solicitarCodigo(event) {
+// Aceita turma 'ativa' (treinamento em andamento) ou 'encerrada' — depois
+// de encerrada, o participante ainda consegue entrar por 12h (pra ver o
+// pódio final), passado isso o acesso se encerra de vez. Turma 'agendada'
+// (ainda não começou) sempre bloqueia o acesso.
+async function buscarParticipanteAtivo(emailInformado) {
+  const res = await db.query(
+    `SELECT p.* FROM participantes p
+     JOIN turmas t ON t.id = p.turma_id
+     WHERE lower(p.email) = lower($1)
+       AND (t.status = 'ativa' OR (t.status = 'encerrada' AND now() <= t.janela_fim + interval '12 hours'))
+     LIMIT 1`,
+    [emailInformado]
+  );
+  return res.rows[0] || null;
+}
+
+// Cria a sessão e marca o início da janela de 24h — compartilhado entre
+// o primeiro acesso (definir-senha) e os acessos seguintes (login).
+async function efetuarLogin(participante) {
+  const primeiroLogin = participante.primeiro_login_em || new Date();
+  const novoStatus = ["convite_pendente", "nao_iniciado"].includes(participante.status) ? "em_curso" : participante.status;
+
+  await db.query(
+    `UPDATE participantes SET primeiro_login_em = $1, status = $2 WHERE id = $3`,
+    [primeiroLogin, novoStatus, participante.id]
+  );
+
+  const token = auth.gerarTokenOpaco();
+  const tokenHash = auth.hashTokenSessao(token);
+  const expiraEm = new Date(new Date(primeiroLogin).getTime() + 24 * 60 * 60 * 1000);
+
+  await db.query(
+    `INSERT INTO participante_sessoes (participante_id, token_hash, expira_em) VALUES ($1, $2, $3)`,
+    [participante.id, tokenHash, expiraEm]
+  );
+
+  await db.query(
+    `INSERT INTO log_auditoria (admin_nome_snapshot, acao, alvo) VALUES ($1, $2, $3)`,
+    [participante.nome, "Login confirmado (e-mail + senha)", participante.email]
+  );
+
+  return http.ok(
+    { mensagem: "Login confirmado." },
+    { "Set-Cookie": auth.cookieDeSessao("habitat_participante_sessao", token, expiraEm) }
+  );
+}
+
+// POST /participante/verificar-email   { email }
+// Decide qual tela mostrar em seguida: criar senha (primeiro acesso) ou
+// digitar senha (acessos seguintes).
+//
+// Sempre responde 200, encontrado ou não — status code diferente (404)
+// era um oráculo trivial pra enumerar e-mails cadastrados na turma (um
+// bot conseguia confirmar quem está na lista só olhando o código HTTP,
+// sem nem tentar senha). O front decide a mensagem a partir do campo
+// `encontrado`, não mais de uma exceção lançada pelo cliente HTTP.
+async function verificarEmail(event) {
   try {
     const { email: emailInformado } = JSON.parse(event.body || "{}");
     if (!emailInformado) return http.badRequest("Informe o e-mail.");
 
-    const resultado = await db.query(
-      `SELECT p.id, t.nome AS turma_nome FROM participantes p
-       JOIN turmas t ON t.id = p.turma_id
-       WHERE lower(p.email) = lower($1) AND t.status = 'ativa'
-       LIMIT 1`,
-      [emailInformado]
-    );
-
-    if (resultado.rows.length > 0) {
-      const participante = resultado.rows[0];
-      const codigo = auth.gerarCodigoOtp();
-      const codigoHash = await auth.hash(codigo);
-
-      await db.query(
-        `INSERT INTO participante_codigos_otp (participante_id, codigo_hash, expira_em)
-         VALUES ($1, $2, $3)`,
-        [participante.id, codigoHash, auth.otpExpiraEm()]
-      );
-
-      await email.enviarCodigoParticipante(emailInformado, codigo, participante.turma_nome);
+    const participante = await buscarParticipanteAtivo(emailInformado.trim());
+    if (!participante) {
+      return http.ok({ encontrado: false });
     }
 
-    // Mensagem idêntica nos dois casos (achou ou não achou o e-mail)
-    return http.ok({ mensagem: "Se o e-mail informado estiver na lista de uma turma ativa, você receberá um código por e-mail em instantes." });
+    return http.ok({ encontrado: true, primeiroAcesso: participante.senha_hash === null });
   } catch (err) {
     return http.serverError(err);
   }
 }
 
-// POST /participante/confirmar-codigo   { email, codigo }
-async function confirmarCodigo(event) {
+// POST /participante/definir-senha   { email, senha }
+async function definirSenha(event) {
   try {
-    const { email: emailInformado, codigo } = JSON.parse(event.body || "{}");
-    if (!emailInformado || !codigo) return http.badRequest("Informe e-mail e código.");
+    const { email: emailInformado, senha } = JSON.parse(event.body || "{}");
+    if (!emailInformado || !senha) return http.badRequest("Informe e-mail e senha.");
+    if (senha.length < 6) return http.badRequest("A senha deve ter pelo menos 6 caracteres.");
 
-    const participanteRes = await db.query(
-      `SELECT p.* FROM participantes p
-       JOIN turmas t ON t.id = p.turma_id
-       WHERE lower(p.email) = lower($1) AND t.status = 'ativa' LIMIT 1`,
-      [emailInformado]
-    );
-    if (participanteRes.rows.length === 0) return http.unauthorized("Código inválido ou expirado.");
-    const participante = participanteRes.rows[0];
+    const participante = await buscarParticipanteAtivo(emailInformado.trim());
+    if (!participante) return http.unauthorized("E-mail não encontrado.");
+    if (participante.senha_hash !== null) return http.conflict("Este e-mail já tem senha definida. Faça login normalmente.");
 
-    const otpRes = await db.query(
-      `SELECT * FROM participante_codigos_otp
-       WHERE participante_id = $1 AND usado = FALSE AND expira_em > now()
-       ORDER BY criado_em DESC LIMIT 1`,
-      [participante.id]
-    );
-    if (otpRes.rows.length === 0) return http.unauthorized("Código inválido ou expirado.");
-    const otp = otpRes.rows[0];
+    const senhaHash = await auth.hash(senha);
+    await db.query(`UPDATE participantes SET senha_hash = $1 WHERE id = $2`, [senhaHash, participante.id]);
 
-    if (otp.tentativas >= 5) return http.unauthorized("Limite de tentativas excedido. Solicite um novo código.");
-
-    const codigoCorreto = await auth.verificarHash(codigo, otp.codigo_hash);
-    if (!codigoCorreto) {
-      await db.query(`UPDATE participante_codigos_otp SET tentativas = tentativas + 1 WHERE id = $1`, [otp.id]);
-      return http.unauthorized("Código incorreto.");
-    }
-
-    await db.query(`UPDATE participante_codigos_otp SET usado = TRUE WHERE id = $1`, [otp.id]);
-
-    // Primeiro login desta pessoa nesta turma? Marca o início da janela de 24h.
-    const primeiroLogin = participante.primeiro_login_em || new Date();
-    const novoStatus = ["convite_pendente", "nao_iniciado"].includes(participante.status) ? "em_curso" : participante.status;
-
-    await db.query(
-      `UPDATE participantes SET primeiro_login_em = $1, status = $2 WHERE id = $3`,
-      [primeiroLogin, novoStatus, participante.id]
-    );
-
-    const token = auth.gerarTokenOpaco();
-    const tokenHash = await auth.hash(token);
-    const expiraEm = new Date(new Date(primeiroLogin).getTime() + 24 * 60 * 60 * 1000);
-
-    await db.query(
-      `INSERT INTO participante_sessoes (participante_id, token_hash, expira_em) VALUES ($1, $2, $3)`,
-      [participante.id, tokenHash, expiraEm]
-    );
-
-    await db.query(
-      `INSERT INTO log_auditoria (admin_nome_snapshot, acao, alvo) VALUES ($1, $2, $3)`,
-      [participante.nome, "Login confirmado (e-mail + código)", participante.email]
-    );
-
-    return http.ok(
-      { mensagem: "Login confirmado." },
-      { "Set-Cookie": auth.cookieDeSessao("nera_participante_sessao", token, expiraEm) }
-    );
+    return efetuarLogin(participante);
   } catch (err) {
     return http.serverError(err);
   }
 }
 
-module.exports = { solicitarCodigo, confirmarCodigo };
+// POST /participante/login   { email, senha }
+async function login(event) {
+  try {
+    const { email: emailInformado, senha } = JSON.parse(event.body || "{}");
+    if (!emailInformado || !senha) return http.badRequest("Informe e-mail e senha.");
+
+    const participante = await buscarParticipanteAtivo(emailInformado.trim());
+    if (!participante || !participante.senha_hash) return http.unauthorized("E-mail ou senha incorretos.");
+
+    const senhaCorreta = await auth.verificarHash(senha, participante.senha_hash);
+    if (!senhaCorreta) return http.unauthorized("E-mail ou senha incorretos.");
+
+    return efetuarLogin(participante);
+  } catch (err) {
+    return http.serverError(err);
+  }
+}
+
+module.exports = { verificarEmail, definirSenha, login };

@@ -33,8 +33,9 @@ async function convidar(event) {
     if (!admin) return http.unauthorized();
     if (!exigirOwner(admin)) return http.forbidden("Disponível apenas para Owner.");
 
-    const { email: emailConvidado, papel } = JSON.parse(event.body || "{}");
+    let { email: emailConvidado, papel } = JSON.parse(event.body || "{}");
     if (!emailConvidado || !["owner", "operador"].includes(papel)) return http.badRequest("Informe e-mail e papel válido.");
+    emailConvidado = emailConvidado.trim();
 
     const existente = await db.query(`SELECT id FROM admins WHERE lower(email) = lower($1)`, [emailConvidado]);
     if (existente.rows.length > 0) return http.conflict("Já existe um administrador com este e-mail.");

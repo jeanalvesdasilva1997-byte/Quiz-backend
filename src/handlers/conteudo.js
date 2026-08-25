@@ -2,7 +2,7 @@
 // handlers/conteudo.js — Módulos e questões: listar, criar, editar
 // =====================================================================
 // Edição/criação bloqueada enquanto existir qualquer turma "ativa"
-// (janela crítica) — decisão explícita do time Nera, aplicada aqui
+// (janela crítica) — decisão explícita da equipe Cebrace, aplicada aqui
 // como trava real, não só como combinado operacional.
 // =====================================================================
 
@@ -26,7 +26,36 @@ async function listar(event) {
        JOIN modulos m ON m.id = q.modulo_id
        ORDER BY q.modulo_id, q.ordem`
     );
-    return http.ok({ questoes: res.rows, bloqueadoParaEdicao: await existeTurmaAtiva() });
+    const modulosRes = await db.query(`SELECT * FROM modulos ORDER BY id`);
+    return http.ok({ questoes: res.rows, modulos: modulosRes.rows, bloqueadoParaEdicao: await existeTurmaAtiva() });
+  } catch (err) {
+    return http.serverError(err);
+  }
+}
+
+// POST /admin/modulos   { nome, subtitulo }
+async function criarModulo(event) {
+  try {
+    const admin = await sessao.adminAutenticado(event);
+    if (!admin) return http.unauthorized();
+    if (await existeTurmaAtiva()) return http.forbidden("Edição bloqueada: existe turma com status Ativa.");
+
+    const { nome, subtitulo } = JSON.parse(event.body || "{}");
+    if (!nome) return http.badRequest("Informe o nome do módulo.");
+
+    const idRes = await db.query(`SELECT COALESCE(MAX(id), 0) + 1 AS proximo FROM modulos`);
+    const proximoId = idRes.rows[0].proximo;
+
+    const res = await db.query(
+      `INSERT INTO modulos (id, nome, subtitulo) VALUES ($1, $2, $3) RETURNING *`,
+      [proximoId, nome, subtitulo || null]
+    );
+
+    await db.query(`INSERT INTO log_auditoria (admin_id, admin_nome_snapshot, acao, alvo) VALUES ($1, $2, $3, $4)`, [
+      admin.admin_id, admin.nome, "Criou novo módulo de conteúdo", nome,
+    ]);
+
+    return http.created({ modulo: res.rows[0] });
   } catch (err) {
     return http.serverError(err);
   }
@@ -76,6 +105,23 @@ async function editar(event) {
     const questaoId = event.pathParameters && event.pathParameters.id;
     const { pergunta, cenario, alternativas, correta, explicacao } = JSON.parse(event.body || "{}");
 
+    const existenteRes = await db.query(`SELECT alternativas FROM questoes WHERE id = $1`, [questaoId]);
+    if (existenteRes.rows.length === 0) return http.notFound("Questão não encontrada.");
+
+    // Mesma checagem de criar() — edição é parcial (campo omitido mantém o
+    // valor atual via COALESCE), então só valida o que veio no body, mas
+    // sempre confere "correta" contra o array de alternativas que vai
+    // valer depois do update (o novo, se veio, senão o que já existia).
+    if (alternativas !== undefined && (!Array.isArray(alternativas) || alternativas.length < 2)) {
+      return http.badRequest("Preencha ao menos 2 alternativas.");
+    }
+    if (correta !== undefined) {
+      const alternativasEfetivas = alternativas !== undefined ? alternativas : existenteRes.rows[0].alternativas;
+      if (correta == null || correta < 0 || correta >= alternativasEfetivas.length) {
+        return http.badRequest("Índice da alternativa correta é inválido.");
+      }
+    }
+
     const res = await db.query(
       `UPDATE questoes SET
          pergunta = COALESCE($1, pergunta),
@@ -99,4 +145,4 @@ async function editar(event) {
   }
 }
 
-module.exports = { listar, criar, editar };
+module.exports = { listar, criar, editar, criarModulo };

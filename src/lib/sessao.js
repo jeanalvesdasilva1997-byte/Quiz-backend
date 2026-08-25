@@ -12,41 +12,44 @@ const http = require("../lib/http");
 
 async function participanteAutenticado(event) {
   const cookies = http.parseCookies(event);
-  const token = cookies["nera_participante_sessao"];
+  const token = cookies["habitat_participante_sessao"];
   if (!token) return null;
 
-  // Como o token é guardado com hash, comparamos contra todas as sessões
-  // não revogadas e ainda válidas — em produção, vale trocar por um
-  // índice mais eficiente (ex: token de lookup separado do segredo).
+  // Busca indexada por token_hash (hash rápido e determinístico — ver
+  // auth.hashTokenSessao) em vez de varrer todas as sessões ativas
+  // comparando uma a uma com bcrypt.
+  //
+  // Depois que a turma é encerrada, o acesso do participante ainda vale
+  // por 12h (pra dar tempo de ver o pódio final) — passado isso, a sessão
+  // para de ser reconhecida aqui, mesmo que o cookie em si ainda não
+  // tenha expirado.
+  const tokenHash = auth.hashTokenSessao(token);
   const sessoes = await db.query(
     `SELECT s.*, p.* FROM participante_sessoes s
      JOIN participantes p ON p.id = s.participante_id
-     WHERE s.revogada = FALSE AND s.expira_em > now()`
+     JOIN turmas t ON t.id = p.turma_id
+     WHERE s.token_hash = $1 AND s.revogada = FALSE AND s.expira_em > now()
+       AND (t.status != 'encerrada' OR now() <= t.janela_fim + interval '12 hours')`,
+    [tokenHash]
   );
 
-  for (const linha of sessoes.rows) {
-    const bate = await auth.verificarHash(token, linha.token_hash);
-    if (bate) return linha;
-  }
-  return null;
+  return sessoes.rows[0] || null;
 }
 
 async function adminAutenticado(event) {
   const cookies = http.parseCookies(event);
-  const token = cookies["nera_admin_sessao"];
+  const token = cookies["habitat_admin_sessao"];
   if (!token) return null;
 
+  const tokenHash = auth.hashTokenSessao(token);
   const sessoes = await db.query(
     `SELECT s.*, a.id AS admin_id, a.nome, a.email, a.papel, a.status FROM admin_sessoes s
      JOIN admins a ON a.id = s.admin_id
-     WHERE s.revogada = FALSE AND s.expira_em > now()`
+     WHERE s.token_hash = $1 AND s.revogada = FALSE AND s.expira_em > now()`,
+    [tokenHash]
   );
 
-  for (const linha of sessoes.rows) {
-    const bate = await auth.verificarHash(token, linha.token_hash);
-    if (bate) return linha;
-  }
-  return null;
+  return sessoes.rows[0] || null;
 }
 
 module.exports = { participanteAutenticado, adminAutenticado };

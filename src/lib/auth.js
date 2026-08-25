@@ -33,6 +33,16 @@ async function hash(valor) {
   return bcrypt.hash(valor, 12);
 }
 
+// Hash de sessão: rápido e determinístico (SHA-256), não bcrypt.
+// Tokens de sessão já nascem com 256 bits de entropia (gerarTokenOpaco),
+// então não precisam do custo do bcrypt (pensado para proteger segredos
+// de baixa entropia, como senha e OTP) — e ser determinístico é o que
+// permite a busca indexada por token_hash em vez de varrer e comparar
+// sessão por sessão a cada requisição autenticada.
+function hashTokenSessao(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
 async function verificarHash(valor, hashArmazenado) {
   return bcrypt.compare(valor, hashArmazenado);
 }
@@ -59,6 +69,7 @@ module.exports = {
   gerarCodigoOtp,
   gerarTokenOpaco,
   hash,
+  hashTokenSessao,
   verificarHash,
   otpExpiraEm,
   sessaoExpiraEm,

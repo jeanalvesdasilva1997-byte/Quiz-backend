@@ -1,26 +1,29 @@
 // =====================================================================
-// lib/gamificacao.js — Regras de pontuação, streak e progresso
+// lib/gamificacao.js — Regras de pontuação, streak e a lista de perguntas
 // =====================================================================
-// Estas regras já foram validadas nos protótipos de front-end — aqui
-// elas viram a versão que manda de verdade (autoridade do servidor).
+// Quiz ao vivo, conduzido pelo admin/tutor: uma pergunta ativa por vez
+// para a turma toda (não é mais por participante). A "lista flat" abaixo
+// define a ordem 0..N-1 usada em turmas.quiz_indice_atual — dinâmica,
+// então não há número de perguntas fixo no código.
 // =====================================================================
 
-const TOTAL_MODULOS = 3;
-const QUESTOES_POR_MODULO = 5;
-const TOTAL_QUESTOES = TOTAL_MODULOS * QUESTOES_POR_MODULO;
-const TEMPO_LIMITE_SEGUNDOS = 5 * 60; // 5 minutos, autoridade do servidor
+const db = require("./db");
 
-function moduloAtual(respondidas) {
-  if (respondidas >= TOTAL_QUESTOES) return TOTAL_MODULOS;
-  return Math.floor(respondidas / QUESTOES_POR_MODULO) + 1;
+const TEMPO_LIMITE_SEGUNDOS = 10; // autoridade do servidor, por pergunta
+
+async function contarModulos() {
+  const res = await db.query(`SELECT COUNT(*)::int AS total FROM modulos`);
+  return res.rows[0].total;
 }
 
-function posicaoNoModulo(respondidas) {
-  return respondidas % QUESTOES_POR_MODULO;
-}
-
-function progressoPercentual(respondidas) {
-  return Math.round((respondidas / TOTAL_QUESTOES) * 100);
+// Ordem canônica das perguntas do quiz — o índice desse array (0, 1, 2...)
+// é o que turmas.quiz_indice_atual referencia.
+async function listaFlatDeQuestoes() {
+  const res = await db.query(
+    `SELECT id, modulo_id, ordem, topico, cenario, pergunta, alternativas, correta, explicacao
+     FROM questoes ORDER BY modulo_id, ordem`
+  );
+  return res.rows;
 }
 
 // Pontuação por streak: 1º acerto = 100, 2º consecutivo = 150,
@@ -32,31 +35,18 @@ function calcularPontuacao(streakAnterior, acertou) {
   return { pontos, novoStreak };
 }
 
-// Verifica se o prazo da questão atual estourou, comparando com o
+// Verifica se o prazo da pergunta ao vivo estourou, comparando com o
 // relógio do servidor — nunca confiando em nada vindo do cliente.
-function tempoEstourado(questaoIniciadaEm) {
-  if (!questaoIniciadaEm) return false;
-  const decorridoMs = Date.now() - new Date(questaoIniciadaEm).getTime();
+function tempoEstourado(quizIniciadaEm) {
+  if (!quizIniciadaEm) return true;
+  const decorridoMs = Date.now() - new Date(quizIniciadaEm).getTime();
   return decorridoMs / 1000 >= TEMPO_LIMITE_SEGUNDOS;
 }
 
-// O streak reinicia sempre que a resposta cruza a fronteira de um módulo,
-// mesmo que a resposta que cruzou tenha sido um acerto (streak "novo"
-// pertence ao próximo módulo, não carrega do anterior).
-function streakAposResposta(respondidasAntes, respondidasDepois, streakCalculado) {
-  const cruzouModulo = Math.floor(respondidasAntes / QUESTOES_POR_MODULO) !== Math.floor((respondidasDepois - 1) / QUESTOES_POR_MODULO);
-  return respondidasDepois % QUESTOES_POR_MODULO === 0 ? 0 : streakCalculado;
-}
-
 module.exports = {
-  TOTAL_MODULOS,
-  QUESTOES_POR_MODULO,
-  TOTAL_QUESTOES,
   TEMPO_LIMITE_SEGUNDOS,
-  moduloAtual,
-  posicaoNoModulo,
-  progressoPercentual,
+  contarModulos,
+  listaFlatDeQuestoes,
   calcularPontuacao,
   tempoEstourado,
-  streakAposResposta,
 };

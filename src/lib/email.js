@@ -7,14 +7,13 @@
 //
 // Todo envio passa por retry com backoff, porque contas novas no SES
 // têm uma taxa inicial de referência (~14 e-mails/segundo) e rajadas
-// grandes (ex: 200 participantes pedindo código ao mesmo tempo) podem
-// esbarrar nesse limite momentaneamente.
+// grandes de convites podem esbarrar nesse limite momentaneamente.
 // =====================================================================
 
 const { SESClient, SendEmailCommand } = require("@aws-sdk/client-ses");
 
 const ses = new SESClient({ region: process.env.AWS_REGION || "sa-east-1" });
-const REMETENTE = process.env.EMAIL_REMETENTE || "acesso@neratreinamento.com.br";
+const REMETENTE = process.env.EMAIL_REMETENTE || "acesso@conforto-habitat.com.br";
 
 async function enviarComRetry(params, tentativas = 3) {
   for (let i = 0; i < tentativas; i++) {
@@ -27,38 +26,12 @@ async function enviarComRetry(params, tentativas = 3) {
         await new Promise((r) => setTimeout(r, esperaMs));
         continue;
       }
-      throw err;
+      // Sem SES configurado (dev local) — imprime o conteúdo no terminal em vez de falhar.
+      console.log(`\n[email não enviado — SES indisponível] Para: ${params.Destination.ToAddresses[0]}`);
+      console.log(params.Message.Body.Text.Data + "\n");
+      return;
     }
   }
-}
-
-async function enviarCodigoParticipante(email, codigo, nomeTurma) {
-  return enviarComRetry({
-    Source: REMETENTE,
-    Destination: { ToAddresses: [email] },
-    Message: {
-      Subject: { Data: `Seu código de acesso — ${nomeTurma}` },
-      Body: {
-        Text: {
-          Data:
-            `Seu código de acesso ao treinamento é: ${codigo}\n\n` +
-            `Ele é válido por 10 minutos. Se você não solicitou este código, ignore este e-mail.\n\n` +
-            `Seu nome e e-mail são usados apenas para o acesso a este treinamento e removidos após a janela de 24h.`,
-        },
-      },
-    },
-  });
-}
-
-async function enviarCodigoAdmin(email, codigo) {
-  return enviarComRetry({
-    Source: REMETENTE,
-    Destination: { ToAddresses: [email] },
-    Message: {
-      Subject: { Data: "Código de confirmação — Portal Nera treinamento" },
-      Body: { Text: { Data: `Seu código de confirmação é: ${codigo}\n\nVálido por 10 minutos.` } },
-    },
-  });
 }
 
 async function enviarConviteAdmin(email, linkAtivacao) {
@@ -66,10 +39,10 @@ async function enviarConviteAdmin(email, linkAtivacao) {
     Source: REMETENTE,
     Destination: { ToAddresses: [email] },
     Message: {
-      Subject: { Data: "Convite — Portal de gerenciamento Nera treinamento" },
-      Body: { Text: { Data: `Você foi convidado a administrar o portal Nera treinamento.\n\nDefina sua senha em: ${linkAtivacao}` } },
+      Subject: { Data: "Convite — Portal de gerenciamento Conversas de Conforto Habitat" },
+      Body: { Text: { Data: `Você foi convidado a administrar o portal Conversas de Conforto Habitat.\n\nDefina sua senha em: ${linkAtivacao}` } },
     },
   });
 }
 
-module.exports = { enviarCodigoParticipante, enviarCodigoAdmin, enviarConviteAdmin };
+module.exports = { enviarConviteAdmin };

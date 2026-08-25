@@ -19,9 +19,14 @@ async function cadastroNoDia(event) {
     const { turmaId, nome, email: emailParticipante, empresa, cnpj } = JSON.parse(event.body || "{}");
     if (!turmaId || !nome || !emailParticipante) return http.badRequest("Informe turma, nome e e-mail.");
 
+    const nomeTrim = nome.trim();
+    const emailTrim = emailParticipante.trim();
+    const empresaTrim = (empresa || "").trim();
+    const cnpjTrim = (cnpj || "").trim();
+
     const dup = await db.query(
       `SELECT id FROM participantes WHERE turma_id = $1 AND lower(email) = lower($2)`,
-      [turmaId, emailParticipante]
+      [turmaId, emailTrim]
     );
     if (dup.rows.length > 0) return http.conflict("Esse e-mail já está cadastrado nesta turma.");
 
@@ -31,7 +36,7 @@ async function cadastroNoDia(event) {
       const res = await client.query(
         `INSERT INTO participantes (turma_id, nome, email, empresa, cnpj, origem, status)
          VALUES ($1, $2, $3, $4, $5, 'no_dia', 'convite_pendente') RETURNING *`,
-        [turmaId, nome, emailParticipante, empresa || null, cnpj || null]
+        [turmaId, nomeTrim, emailTrim, empresaTrim || null, cnpjTrim || null]
       );
       return res.rows[0];
     });
@@ -43,10 +48,10 @@ async function cadastroNoDia(event) {
     ]);
 
     const turmaRes = await db.query(`SELECT nome FROM turmas WHERE id = $1`, [turmaId]);
-    await email.enviarCodigoParticipante(emailParticipante, codigo, turmaRes.rows[0].nome);
+    await email.enviarCodigoParticipante(emailTrim, codigo, turmaRes.rows[0].nome);
 
     await db.query(`INSERT INTO log_auditoria (admin_id, admin_nome_snapshot, acao, alvo) VALUES ($1, $2, $3, $4)`, [
-      admin.admin_id, admin.nome, "Adicionou participante (cadastro no dia)", `${nome} — ${turmaRes.rows[0].nome}`,
+      admin.admin_id, admin.nome, "Adicionou participante (cadastro no dia)", `${nomeTrim} — ${turmaRes.rows[0].nome}`,
     ]);
 
     return http.created({ participante });
