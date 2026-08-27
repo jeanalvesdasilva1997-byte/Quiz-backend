@@ -36,6 +36,15 @@ async function participanteAutenticado(event) {
   return sessoes.rows[0] || null;
 }
 
+// Distingue "nunca logou" (sem cookie — cai na tela normal de login) de
+// "logou e a sessão não é mais válida" (cookie presente, mas expirado ou
+// revogado — cai na tela de aviso de acesso encerrado). Sem isso, os dois
+// casos pareciam idênticos pro front (401 genérico).
+function participanteTinhaCookie(event) {
+  const cookies = http.parseCookies(event);
+  return Boolean(cookies["habitat_participante_sessao"]);
+}
+
 async function adminAutenticado(event) {
   const cookies = http.parseCookies(event);
   const token = cookies["habitat_admin_sessao"];
@@ -52,4 +61,4 @@ async function adminAutenticado(event) {
   return sessoes.rows[0] || null;
 }
 
-module.exports = { participanteAutenticado, adminAutenticado };
+module.exports = { participanteAutenticado, participanteTinhaCookie, adminAutenticado };

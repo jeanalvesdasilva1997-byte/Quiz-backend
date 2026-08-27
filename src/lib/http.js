@@ -31,8 +31,8 @@ function unauthorized(mensagem = "Não autenticado.") {
   return jsonResponse(401, { erro: mensagem });
 }
 
-function forbidden(mensagem = "Sem permissão para esta ação.") {
-  return jsonResponse(403, { erro: mensagem });
+function forbidden(mensagem = "Sem permissão para esta ação.", extra = {}) {
+  return jsonResponse(403, { erro: mensagem, ...extra });
 }
 
 function notFound(mensagem = "Recurso não encontrado.") {

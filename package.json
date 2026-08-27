@@ -10,7 +10,8 @@
     "exceljs": "^4.4.0",
     "express": "^4.19.2",
     "express-rate-limit": "^8.6.2",
-    "pg": "^8.11.5"
+    "pg": "^8.11.5",
+    "resend": "^6.24.0"
   },
   "scripts": {
     "start": "node src/server.js"

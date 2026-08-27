@@ -207,7 +207,11 @@ async function liberarFase2(event) {
 async function estadoParticipante(event) {
   try {
     const p = await sessao.participanteAutenticado(event);
-    if (!p) return http.unauthorized();
+    if (!p) {
+      return sessao.participanteTinhaCookie(event)
+        ? http.forbidden("Sua sessão foi encerrada.", { acessoExpirado: true })
+        : http.unauthorized();
+    }
 
     const turma = await buscarTurma(p.turma_id);
     if (!turma) return http.notFound("Turma não encontrada.");
@@ -245,7 +249,11 @@ async function estadoParticipante(event) {
 async function responder(event) {
   try {
     const p = await sessao.participanteAutenticado(event);
-    if (!p) return http.unauthorized();
+    if (!p) {
+      return sessao.participanteTinhaCookie(event)
+        ? http.forbidden("Sua sessão foi encerrada.", { acessoExpirado: true })
+        : http.unauthorized();
+    }
 
     const { questaoId, alternativaSelecionada } = JSON.parse(event.body || "{}");
 

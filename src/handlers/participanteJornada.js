@@ -13,7 +13,11 @@ const sessao = require("../lib/sessao");
 async function painel(event) {
   try {
     const p = await sessao.participanteAutenticado(event);
-    if (!p) return http.unauthorized();
+    if (!p) {
+      return sessao.participanteTinhaCookie(event)
+        ? http.forbidden("Sua sessão foi encerrada.", { acessoExpirado: true })
+        : http.unauthorized();
+    }
 
     const turmaRes = await db.query(`SELECT status, quiz_fase, quiz_estado FROM turmas WHERE id = $1`, [p.turma_id]);
     const turma = turmaRes.rows[0];

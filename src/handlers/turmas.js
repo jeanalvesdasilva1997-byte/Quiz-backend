@@ -116,6 +116,36 @@ async function criar(event) {
   }
 }
 
+// POST /admin/turmas/:id/ativar
+// Abre a janela de acesso dos participantes (24h) e libera a turma pra
+// aparecer em Monitoramento/Condução da Prova. Só faz sentido a partir de
+// 'agendada' — reativar uma turma já 'encerrada' teria que reabrir a
+// janela pra quem já viu o pódio final, então fica de fora por ora.
+async function ativar(event) {
+  try {
+    const admin = await sessao.adminAutenticado(event);
+    if (!admin) return http.unauthorized();
+
+    const turmaId = event.pathParameters && event.pathParameters.id;
+    const turmaRes = await db.query(`SELECT id, nome, status FROM turmas WHERE id = $1`, [turmaId]);
+    if (turmaRes.rows.length === 0) return http.notFound("Turma não encontrada.");
+    if (turmaRes.rows[0].status !== "agendada") return http.conflict("Só é possível ativar uma turma que está Agendada.");
+
+    const res = await db.query(
+      `UPDATE turmas SET status = 'ativa', janela_inicio = now(), janela_fim = now() + interval '24 hours' WHERE id = $1 RETURNING *`,
+      [turmaId]
+    );
+
+    await db.query(`INSERT INTO log_auditoria (admin_id, admin_nome_snapshot, acao, alvo) VALUES ($1, $2, $3, $4)`, [
+      admin.admin_id, admin.nome, "Ativou a turma", turmaRes.rows[0].nome,
+    ]);
+
+    return http.ok({ turma: res.rows[0] });
+  } catch (err) {
+    return http.serverError(err);
+  }
+}
+
 // POST /admin/turmas/:id/encerrar
 // Fecha a turma: impede o admin de continuar conduzindo o quiz ao vivo
 // (a turma some da lista de turmas ativas) e trava novas respostas —
@@ -147,4 +177,4 @@ async function encerrar(event) {
   }
 }
 
-module.exports = { listar, conferir, criar, encerrar };
+module.exports = { listar, conferir, criar, ativar, encerrar };

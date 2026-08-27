@@ -31,6 +31,18 @@ async function buscarParticipanteAtivo(emailInformado) {
 // o primeiro acesso (definir-senha) e os acessos seguintes (login).
 async function efetuarLogin(participante) {
   const primeiroLogin = participante.primeiro_login_em || new Date();
+  const expiraEm = new Date(new Date(primeiroLogin).getTime() + 24 * 60 * 60 * 1000);
+
+  // A janela de 24h do participante já fechou (ex: primeiro acesso foi há
+  // mais de um dia). Sem essa checagem, o login "dava certo" mas o cookie
+  // já nascia com Max-Age negativo — o navegador descartava na hora e a
+  // pessoa ficava presa numa tela de carregamento infinita, sem entender
+  // por quê. Aqui a recusa é explícita, com uma mensagem que o front sabe
+  // reconhecer (accessoExpirado) pra mostrar a tela de aviso adequada.
+  if (expiraEm <= new Date()) {
+    return http.forbidden("Seu acesso a este treinamento já expirou.", { acessoExpirado: true });
+  }
+
   const novoStatus = ["convite_pendente", "nao_iniciado"].includes(participante.status) ? "em_curso" : participante.status;
 
   await db.query(
@@ -40,7 +52,6 @@ async function efetuarLogin(participante) {
 
   const token = auth.gerarTokenOpaco();
   const tokenHash = auth.hashTokenSessao(token);
-  const expiraEm = new Date(new Date(primeiroLogin).getTime() + 24 * 60 * 60 * 1000);
 
   await db.query(
     `INSERT INTO participante_sessoes (participante_id, token_hash, expira_em) VALUES ($1, $2, $3)`,

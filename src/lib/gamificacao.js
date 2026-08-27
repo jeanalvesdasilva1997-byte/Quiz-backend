@@ -9,7 +9,7 @@
 
 const db = require("./db");
 
-const TEMPO_LIMITE_SEGUNDOS = 10; // autoridade do servidor, por pergunta
+const TEMPO_LIMITE_SEGUNDOS = 60; // autoridade do servidor, por pergunta
 
 async function contarModulos() {
   const res = await db.query(`SELECT COUNT(*)::int AS total FROM modulos`);

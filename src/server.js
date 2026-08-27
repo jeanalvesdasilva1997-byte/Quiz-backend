@@ -145,6 +145,7 @@ app.post("/admin/redefinir-senha", limitadorLogin, adaptar(adminAuth.redefinirSe
 app.get("/admin/turmas", adaptar(turmas.listar));
 app.post("/admin/turmas/conferir", adaptar(turmas.conferir));
 app.post("/admin/turmas", adaptar(turmas.criar));
+app.post("/admin/turmas/:id/ativar", adaptar(turmas.ativar));
 app.post("/admin/turmas/:id/encerrar", adaptar(turmas.encerrar));
 
 // ---------------- Admin — quiz ao vivo (condução da prova) ----------------
