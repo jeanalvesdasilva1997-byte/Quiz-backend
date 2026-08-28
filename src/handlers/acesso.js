@@ -49,12 +49,25 @@ async function convidar(event) {
       [emailConvidado.split("@")[0], emailConvidado, senhaTemporariaHash, papel, admin.admin_id]
     );
 
-    const tokenAtivacao = auth.gerarTokenOpaco();
+    // Reaproveita o mesmo mecanismo de "definir senha por link" do reset
+    // de senha (admin_reset_senha + tela /?view=redefinir-senha) em vez de
+    // um fluxo de ativação próprio — antes o token de convite era gerado
+    // e descartado sem nunca ser gravado no banco (não dava pra validar
+    // nada), e o link apontava pra um path (/ativar-convite) que o front
+    // (uma SPA sem roteador) não trata, resultando em 404. Prazo mais
+    // generoso que o do "esqueci minha senha" (30min) porque convite não
+    // tem a mesma urgência — a pessoa pode só abrir o e-mail dias depois.
+    const token = auth.gerarTokenOpaco();
+    const tokenHash = await auth.hash(token);
+    const expiraEm = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 dias
+    await db.query(`INSERT INTO admin_reset_senha (admin_id, token_hash, expira_em) VALUES ($1, $2, $3)`, [
+      novoAdmin.rows[0].id, tokenHash, expiraEm,
+    ]);
     // ADMIN_FRONTEND_URL, não FRONTEND_ORIGIN — este último é a lista de
     // origens permitidas no CORS (pode ter mais de um domínio, separado
     // por vírgula, incluindo o front do participante), e não dá pra
     // montar um link clicável a partir disso.
-    const link = `${process.env.ADMIN_FRONTEND_URL}/ativar-convite?token=${tokenAtivacao}&email=${encodeURIComponent(emailConvidado)}`;
+    const link = `${process.env.ADMIN_FRONTEND_URL}/?view=redefinir-senha&token=${token}&email=${encodeURIComponent(emailConvidado)}`;
     await email.enviarConviteAdmin(emailConvidado, link);
 
     await db.query(`INSERT INTO log_auditoria (admin_id, admin_nome_snapshot, acao, alvo) VALUES ($1, $2, $3, $4)`, [
