@@ -70,4 +70,25 @@ async function enviarResetSenhaAdmin(email, linkReset) {
   await enviar(email, assunto, corpoTexto, corpoHtml);
 }
 
-module.exports = { enviarConviteAdmin, enviarResetSenhaAdmin };
+// Diferente do convite/reset de admin, aqui não tem token nenhum — o
+// portal do participante não usa link de ativação, é só o e-mail
+// cadastrado + senha própria (criada no primeiro acesso). O "link" é
+// só a URL do site mesmo.
+async function enviarLinkPortalParticipante(email, nome, nomeTurma, dataEvento, linkPortal) {
+  // timeZone: 'UTC' explícito — a coluna é DATE puro (meia-noite UTC), sem
+  // isso o servidor formataria no seu próprio fuso e a data podia voltar
+  // um dia (ex: meia-noite UTC vira 21h do dia anterior em UTC-3).
+  const dataFormatada = new Date(dataEvento).toLocaleDateString("pt-BR", { timeZone: "UTC" });
+  const assunto = "Seu acesso ao treinamento — Conversas de Conforto Habitat by Cebrace";
+  const corpoTexto = `Olá, ${nome}!\n\nVocê está cadastrado(a) na turma "${nomeTurma}" do treinamento Conversas de Conforto Habitat by Cebrace, no dia ${dataFormatada}.\n\nAcesse o portal em: ${linkPortal}\n\nAcesso liberado somente no dia do evento.\n\nUse o e-mail ${email} para entrar — no primeiro acesso você cria sua própria senha.`;
+  const corpoHtml = `
+    <p>Olá, <strong>${nome}</strong>!</p>
+    <p>Você está cadastrado(a) na turma <strong>${nomeTurma}</strong> do treinamento <strong>Conversas de Conforto Habitat by Cebrace</strong>, no dia <strong>${dataFormatada}</strong>.</p>
+    <p><a href="${linkPortal}">Acessar o portal</a></p>
+    <p style="font-style:italic;">Acesso liberado somente no dia do evento.</p>
+    <p style="color:#8A8377;font-size:12px;">Use o e-mail ${email} para entrar — no primeiro acesso você cria sua própria senha.</p>
+  `;
+  await enviar(email, assunto, corpoTexto, corpoHtml);
+}
+
+module.exports = { enviarConviteAdmin, enviarResetSenhaAdmin, enviarLinkPortalParticipante };

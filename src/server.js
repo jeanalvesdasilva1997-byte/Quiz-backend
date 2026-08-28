@@ -153,6 +153,8 @@ app.get("/admin/turmas/:id/quiz", adaptar(quizAoVivo.estadoAoVivo));
 app.post("/admin/turmas/:id/quiz/iniciar-fase1", adaptar(quizAoVivo.iniciarFase1));
 app.post("/admin/turmas/:id/quiz/proxima", adaptar(quizAoVivo.proximaPergunta));
 app.post("/admin/turmas/:id/quiz/liberar-fase2", adaptar(quizAoVivo.liberarFase2));
+app.post("/admin/turmas/:id/quiz/liberar-podio1", adaptar(quizAoVivo.liberarPodio1));
+app.post("/admin/turmas/:id/quiz/liberar-podio2", adaptar(quizAoVivo.liberarPodio2));
 
 // ---------------- Admin — cadastro no dia / liberação manual ----------------
 app.post("/admin/cadastro-no-dia", adaptar(participantesAdmin.cadastroNoDia));

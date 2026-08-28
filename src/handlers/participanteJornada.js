@@ -19,14 +19,17 @@ async function painel(event) {
         : http.unauthorized();
     }
 
-    const turmaRes = await db.query(`SELECT status, quiz_fase, quiz_estado FROM turmas WHERE id = $1`, [p.turma_id]);
+    const turmaRes = await db.query(`SELECT status, quiz_fase, quiz_estado, podio1_liberado, podio2_liberado FROM turmas WHERE id = $1`, [p.turma_id]);
     const turma = turmaRes.rows[0];
 
     // Não existe pontuação somada entre fases — cada pódio ranqueia só
-    // pela fase correspondente (Pódio 1 = Fase 1, Pódio 2 = Fase 2).
+    // pela fase correspondente (Pódio 1 = Fase 1, Pódio 2 = Fase 2). Além
+    // da fase estar concluída, o admin precisa ter liberado explicitamente
+    // (podioN_liberado) — senão ninguém vê o ranking antes da hora certa,
+    // mesmo já tendo terminado de responder.
     let podio1 = null;
     let podio2 = null;
-    if (turma && (turma.quiz_estado === "fase1_concluida" || turma.quiz_estado === "fase2_concluida")) {
+    if (turma && turma.podio1_liberado) {
       const res1 = await db.query(
         `SELECT nome, empresa, xp_fase1 AS pontos, melhor_streak FROM participantes
          WHERE turma_id = $1 ORDER BY xp_fase1 DESC, melhor_streak DESC LIMIT 3`,
@@ -34,7 +37,7 @@ async function painel(event) {
       );
       podio1 = res1.rows;
     }
-    if (turma && turma.quiz_estado === "fase2_concluida") {
+    if (turma && turma.podio2_liberado) {
       const res2 = await db.query(
         `SELECT nome, empresa, xp_fase2 AS pontos, melhor_streak FROM participantes
          WHERE turma_id = $1 ORDER BY xp_fase2 DESC, melhor_streak DESC LIMIT 3`,
@@ -54,6 +57,8 @@ async function painel(event) {
       turmaEncerrada: turma ? turma.status === "encerrada" : false,
       podio1,
       podio2,
+      podio1Liberado: turma ? turma.podio1_liberado : false,
+      podio2Liberado: turma ? turma.podio2_liberado : false,
     });
   } catch (err) {
     return http.serverError(err);

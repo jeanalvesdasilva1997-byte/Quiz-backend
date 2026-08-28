@@ -3,7 +3,6 @@
 // =====================================================================
 
 const db = require("../lib/db");
-const auth = require("../lib/auth");
 const email = require("../lib/email");
 const http = require("../lib/http");
 const sessao = require("../lib/sessao");
@@ -30,25 +29,24 @@ async function cadastroNoDia(event) {
     );
     if (dup.rows.length > 0) return http.conflict("Esse e-mail já está cadastrado nesta turma.");
 
-    // Grava primeiro, confirma, só então envia o código — nunca na ordem inversa
-    // (evita mandar um código válido para um cadastro que falhou ao salvar).
+    // Grava primeiro, confirma, só então envia o e-mail — nunca na ordem
+    // inversa (evita mandar um link válido para um cadastro que falhou ao salvar).
     const participante = await db.withTransaction(async (client) => {
       const res = await client.query(
         `INSERT INTO participantes (turma_id, nome, email, empresa, cnpj, origem, status)
-         VALUES ($1, $2, $3, $4, $5, 'no_dia', 'convite_pendente') RETURNING *`,
+         VALUES ($1, $2, $3, $4, $5, 'no_dia', 'nao_iniciado') RETURNING *`,
         [turmaId, nomeTrim, emailTrim, empresaTrim || null, cnpjTrim || null]
       );
       return res.rows[0];
     });
 
-    const codigo = auth.gerarCodigoOtp();
-    const codigoHash = await auth.hash(codigo);
-    await db.query(`INSERT INTO participante_codigos_otp (participante_id, codigo_hash, expira_em) VALUES ($1, $2, $3)`, [
-      participante.id, codigoHash, auth.otpExpiraEm(),
-    ]);
-
-    const turmaRes = await db.query(`SELECT nome FROM turmas WHERE id = $1`, [turmaId]);
-    await email.enviarCodigoParticipante(emailTrim, codigo, turmaRes.rows[0].nome);
+    const turmaRes = await db.query(`SELECT nome, data_evento FROM turmas WHERE id = $1`, [turmaId]);
+    const linkPortal = process.env.PARTICIPANT_FRONTEND_URL;
+    if (!linkPortal) {
+      console.warn("PARTICIPANT_FRONTEND_URL ausente — e-mail de acesso não enviado ao participante.");
+    } else {
+      await email.enviarLinkPortalParticipante(emailTrim, nomeTrim, turmaRes.rows[0].nome, turmaRes.rows[0].data_evento, linkPortal);
+    }
 
     await db.query(`INSERT INTO log_auditoria (admin_id, admin_nome_snapshot, acao, alvo) VALUES ($1, $2, $3, $4)`, [
       admin.admin_id, admin.nome, "Adicionou participante (cadastro no dia)", `${nomeTrim} — ${turmaRes.rows[0].nome}`,

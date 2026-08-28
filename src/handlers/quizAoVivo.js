@@ -19,7 +19,8 @@ const gam = require("../lib/gamificacao");
 
 async function buscarTurma(turmaId) {
   const res = await db.query(
-    `SELECT id, nome, status, quiz_fase, quiz_estado, quiz_indice_atual, quiz_questao_id, quiz_iniciada_em
+    `SELECT id, nome, status, quiz_fase, quiz_estado, quiz_indice_atual, quiz_questao_id, quiz_iniciada_em,
+            podio1_liberado, podio2_liberado
      FROM turmas WHERE id = $1`,
     [turmaId]
   );
@@ -81,6 +82,8 @@ async function estadoAoVivo(event) {
       totalParticipantes: totalParticipantesRes.rows[0].total,
       responderam: respostas.responderam,
       corretas: respostas.corretas,
+      podio1Liberado: turma.podio1_liberado,
+      podio2Liberado: turma.podio2_liberado,
     });
   } catch (err) {
     return http.serverError(err);
@@ -199,6 +202,56 @@ async function liberarFase2(event) {
   }
 }
 
+// POST /admin/turmas/:id/quiz/liberar-podio1
+// O pódio da Fase 1 só aparece pro participante depois que o admin libera
+// explicitamente — mesmo com a fase já concluída para todo mundo, ninguém
+// vê o resultado até esse clique (evita alguém ver antes da hora certa,
+// ex: enquanto o tutor ainda está comentando os acertos ao vivo).
+async function liberarPodio1(event) {
+  try {
+    const admin = await sessao.adminAutenticado(event);
+    if (!admin) return http.unauthorized();
+
+    const turmaId = event.pathParameters && event.pathParameters.id;
+    const turma = await buscarTurma(turmaId);
+    if (!turma) return http.notFound("Turma não encontrada.");
+    if (turma.quiz_estado !== "fase1_concluida") return http.conflict("A Fase 1 ainda não foi concluída.");
+
+    const res = await db.query(`UPDATE turmas SET podio1_liberado = TRUE WHERE id = $1 RETURNING podio1_liberado`, [turmaId]);
+
+    await db.query(`INSERT INTO log_auditoria (admin_id, admin_nome_snapshot, acao, alvo) VALUES ($1, $2, $3, $4)`, [
+      admin.admin_id, admin.nome, "Liberou o pódio da Fase 1", turma.nome,
+    ]);
+
+    return http.ok({ podio1Liberado: res.rows[0].podio1_liberado });
+  } catch (err) {
+    return http.serverError(err);
+  }
+}
+
+// POST /admin/turmas/:id/quiz/liberar-podio2
+async function liberarPodio2(event) {
+  try {
+    const admin = await sessao.adminAutenticado(event);
+    if (!admin) return http.unauthorized();
+
+    const turmaId = event.pathParameters && event.pathParameters.id;
+    const turma = await buscarTurma(turmaId);
+    if (!turma) return http.notFound("Turma não encontrada.");
+    if (turma.quiz_estado !== "fase2_concluida") return http.conflict("A Fase 2 ainda não foi concluída.");
+
+    const res = await db.query(`UPDATE turmas SET podio2_liberado = TRUE WHERE id = $1 RETURNING podio2_liberado`, [turmaId]);
+
+    await db.query(`INSERT INTO log_auditoria (admin_id, admin_nome_snapshot, acao, alvo) VALUES ($1, $2, $3, $4)`, [
+      admin.admin_id, admin.nome, "Liberou o pódio final (Fase 2)", turma.nome,
+    ]);
+
+    return http.ok({ podio2Liberado: res.rows[0].podio2_liberado });
+  } catch (err) {
+    return http.serverError(err);
+  }
+}
+
 // =====================================================================
 // PARTICIPANTE
 // =====================================================================
@@ -304,4 +357,4 @@ async function responder(event) {
   }
 }
 
-module.exports = { estadoAoVivo, iniciarFase1, proximaPergunta, liberarFase2, estadoParticipante, responder };
+module.exports = { estadoAoVivo, iniciarFase1, proximaPergunta, liberarFase2, liberarPodio1, liberarPodio2, estadoParticipante, responder };

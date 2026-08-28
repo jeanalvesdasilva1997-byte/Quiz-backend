@@ -3,6 +3,7 @@
 // =====================================================================
 
 const db = require("../lib/db");
+const email = require("../lib/email");
 const http = require("../lib/http");
 const sessao = require("../lib/sessao");
 
@@ -89,6 +90,7 @@ async function criar(event) {
     const { nome, dataEvento, participantes } = JSON.parse(event.body || "{}");
     if (!nome || !dataEvento) return http.badRequest("Informe nome e data da turma.");
 
+    const participantesTrim = [];
     const turma = await db.withTransaction(async (client) => {
       const turmaRes = await client.query(
         `INSERT INTO turmas (nome, data_evento, status, criada_por) VALUES ($1, $2, 'agendada', $3) RETURNING *`,
@@ -97,11 +99,13 @@ async function criar(event) {
       const novaTurma = turmaRes.rows[0];
 
       for (const p of participantes || []) {
+        const pTrim = { nome: (p.nome || "").trim(), email: (p.email || "").trim(), empresa: (p.empresa || "").trim() || null, cnpj: (p.cnpj || "").trim() || null };
         await client.query(
           `INSERT INTO participantes (turma_id, nome, email, empresa, cnpj, origem, status)
            VALUES ($1, $2, $3, $4, $5, 'lista', 'nao_iniciado')`,
-          [novaTurma.id, (p.nome || "").trim(), (p.email || "").trim(), (p.empresa || "").trim() || null, (p.cnpj || "").trim() || null]
+          [novaTurma.id, pTrim.nome, pTrim.email, pTrim.empresa, pTrim.cnpj]
         );
+        participantesTrim.push(pTrim);
       }
       return novaTurma;
     });
@@ -109,6 +113,18 @@ async function criar(event) {
     await db.query(`INSERT INTO log_auditoria (admin_id, admin_nome_snapshot, acao, alvo) VALUES ($1, $2, $3, $4)`, [
       admin.admin_id, admin.nome, "Criou turma via upload de lista", nome,
     ]);
+
+    // Avisa todo mundo assim que a turma é confirmada — não espera a
+    // ativação. A mensagem já deixa claro que o acesso só libera no dia
+    // do evento (ver lib/email.js), então não há problema em avisar cedo.
+    const linkPortal = process.env.PARTICIPANT_FRONTEND_URL;
+    if (!linkPortal) {
+      console.warn("PARTICIPANT_FRONTEND_URL ausente — e-mail de acesso não enviado aos participantes da turma.");
+    } else {
+      await Promise.allSettled(
+        participantesTrim.map((p) => email.enviarLinkPortalParticipante(p.email, p.nome, turma.nome, turma.data_evento, linkPortal))
+      );
+    }
 
     return http.created({ turma });
   } catch (err) {
@@ -140,6 +156,8 @@ async function ativar(event) {
       admin.admin_id, admin.nome, "Ativou a turma", turmaRes.rows[0].nome,
     ]);
 
+    // O aviso por e-mail já saiu na confirmação da turma (criar()) — aqui
+    // é só abrir a janela de acesso, sem novo envio.
     return http.ok({ turma: res.rows[0] });
   } catch (err) {
     return http.serverError(err);
