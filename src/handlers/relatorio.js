@@ -23,12 +23,20 @@ const STATUS_LABEL = {
 // Fase 2 continuam expostas lado a lado só como acompanhamento.
 async function carregarParticipantesOrdenados(turmaId) {
   const res = await db.query(
-    `SELECT nome, email, empresa, cnpj, xp_fase1, xp_fase2, melhor_streak, status
+    `SELECT nome, email, empresa, cnpj, xp_fase1, xp_fase2, melhor_streak, status, consentimento_nera
      FROM participantes WHERE turma_id = $1
      ORDER BY xp_fase2 DESC, melhor_streak DESC`,
     [turmaId]
   );
   return res.rows;
+}
+
+// Binário por decisão de negócio: só autorização explícita (TRUE) conta
+// como "Sim". Recusa explícita (FALSE) e ausência de resposta (NULL —
+// inclui quem nunca chegou a fazer login) contam como "Não", já que
+// nenhuma das duas é uma autorização de fato.
+function labelPermissao(consentimentoNera) {
+  return consentimentoNera === true ? "Sim" : "Não";
 }
 
 // GET /admin/relatorio/:turmaId
@@ -80,23 +88,24 @@ async function gerarXlsxBuffer(turmaNome, dataEvento, participantes) {
     { key: "fase1", width: 13 },
     { key: "fase2", width: 13 },
     { key: "streak", width: 15 },
+    { key: "permissao", width: 18 },
   ];
 
-  sheet.mergeCells("A1:H1");
+  sheet.mergeCells("A1:I1");
   const titulo = sheet.getCell("A1");
   titulo.value = `Conversas de Conforto Habitat — Controle de Participantes — ${turmaNome}`;
   titulo.font = { name: "Arial", size: 16, bold: true, color: { argb: DARK } };
   titulo.alignment = { vertical: "middle" };
   sheet.getRow(1).height = 30;
 
-  sheet.mergeCells("A2:H2");
+  sheet.mergeCells("A2:I2");
   const subtitulo = sheet.getCell("A2");
   const dataFormatada = dataEvento ? new Date(dataEvento).toLocaleDateString("pt-BR") : "—";
   subtitulo.value = `Data do evento: ${dataFormatada} — Gerado em ${new Date().toLocaleString("pt-BR")} — ${participantes.length} participante(s)`;
   subtitulo.font = { name: "Arial", size: 10, italic: true, color: { argb: GRAY } };
   sheet.getRow(2).height = 18;
 
-  const headerRow = sheet.addRow(["Ranking", "Nome", "E-mail", "Empresa", "Status", "Pontuação Fase 1", "Pontuação Fase 2", "Melhor Streak"]);
+  const headerRow = sheet.addRow(["Ranking", "Nome", "E-mail", "Empresa", "Status", "Pontuação Fase 1", "Pontuação Fase 2", "Melhor Streak", "Permissão"]);
   headerRow.height = 24;
   headerRow.eachCell((cell) => {
     cell.font = { name: "Arial", bold: true, color: { argb: "FFFFFFFF" } };
@@ -115,11 +124,12 @@ async function gerarXlsxBuffer(turmaNome, dataEvento, participantes) {
       p.xp_fase1,
       p.xp_fase2,
       p.melhor_streak,
+      labelPermissao(p.consentimento_nera),
     ]);
     row.height = 20;
 
     const zebra = i % 2 === 1;
-    const colunasCentralizadas = [1, 6, 7, 8];
+    const colunasCentralizadas = [1, 6, 7, 8, 9];
     row.eachCell((cell, colNumber) => {
       cell.font = { name: "Arial", size: 11, color: { argb: DARK } };
       cell.alignment = { vertical: "middle", horizontal: colunasCentralizadas.includes(colNumber) ? "center" : "left" };
@@ -136,13 +146,18 @@ async function gerarXlsxBuffer(turmaNome, dataEvento, participantes) {
       statusCell.font = { name: "Arial", size: 11, color: { argb: GRAY } };
     }
 
+    const permissaoCell = row.getCell(9);
+    permissaoCell.font = p.consentimento_nera === true
+      ? { name: "Arial", size: 11, bold: true, color: { argb: GREEN } }
+      : { name: "Arial", size: 11, color: { argb: GRAY } };
+
     if (ranking <= 3) {
       row.getCell(1).font = { name: "Arial", bold: true, color: { argb: ORANGE } };
       row.getCell(7).font = { name: "Arial", bold: true, color: { argb: DARK } }; // Fase 2 — critério do ranking
     }
   });
 
-  sheet.autoFilter = { from: "A3", to: "H3" };
+  sheet.autoFilter = { from: "A3", to: "I3" };
 
   return wb.xlsx.writeBuffer();
 }

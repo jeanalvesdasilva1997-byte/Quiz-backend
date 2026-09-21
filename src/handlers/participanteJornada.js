@@ -59,10 +59,46 @@ async function painel(event) {
       podio2,
       podio1Liberado: turma ? turma.podio1_liberado : false,
       podio2Liberado: turma ? turma.podio2_liberado : false,
+      // NULL = ainda não perguntado — é o que decide se o front mostra a
+      // tela de autorização antes da sala. TRUE/FALSE = já respondeu.
+      consentimentoNera: p.consentimento_nera,
     });
   } catch (err) {
     return http.serverError(err);
   }
 }
 
-module.exports = { painel };
+// POST /participante/consentimento-nera   { autorizou: boolean }
+// Registra a autorização (ou não) de contato comercial futuro pela Nera —
+// consentimento específico, separado da gestão do treinamento pela
+// Cebrace. Responder aqui não afeta o acesso ao treinamento em nenhum
+// dos dois sentidos.
+async function registrarConsentimentoNera(event) {
+  try {
+    const p = await sessao.participanteAutenticado(event);
+    if (!p) {
+      return sessao.participanteTinhaCookie(event)
+        ? http.forbidden("Sua sessão foi encerrada.", { acessoExpirado: true })
+        : http.unauthorized();
+    }
+
+    const { autorizou } = JSON.parse(event.body || "{}");
+    if (typeof autorizou !== "boolean") return http.badRequest("Informe se autoriza ou não o contato.");
+
+    await db.query(
+      `UPDATE participantes SET consentimento_nera = $1, consentimento_nera_em = now() WHERE id = $2`,
+      [autorizou, p.id]
+    );
+
+    await db.query(
+      `INSERT INTO log_auditoria (admin_nome_snapshot, acao, alvo) VALUES ($1, $2, $3)`,
+      [p.nome, autorizou ? "Autorizou contato comercial da Nera" : "Não autorizou contato comercial da Nera", p.email]
+    );
+
+    return http.ok({ mensagem: "Preferência registrada." });
+  } catch (err) {
+    return http.serverError(err);
+  }
+}
+
+module.exports = { painel, registrarConsentimentoNera };

@@ -133,6 +133,7 @@ app.post("/participante/verificar-email", limitadorLogin, adaptar(participanteAu
 app.post("/participante/definir-senha", limitadorLogin, adaptar(participanteAuth.definirSenha));
 app.post("/participante/login", limitadorLogin, adaptar(participanteAuth.login));
 app.get("/participante/painel", adaptar(participanteJornada.painel));
+app.post("/participante/consentimento-nera", adaptar(participanteJornada.registrarConsentimentoNera));
 app.get("/participante/quiz-estado", adaptar(quizAoVivo.estadoParticipante));
 app.post("/participante/responder", adaptar(quizAoVivo.responder));
 
