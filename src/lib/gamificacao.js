@@ -9,7 +9,14 @@
 
 const db = require("./db");
 
-const TEMPO_LIMITE_SEGUNDOS = 60; // autoridade do servidor, por pergunta
+// Autoridade do servidor, por pergunta — Fase 2 tem mais tempo que a Fase 1
+// (mesmas perguntas, mas respondidas sem o apoio da apresentação ao vivo).
+const TEMPO_LIMITE_FASE1_SEGUNDOS = 60;
+const TEMPO_LIMITE_FASE2_SEGUNDOS = 120;
+
+function tempoLimiteSegundos(fase) {
+  return fase === 2 ? TEMPO_LIMITE_FASE2_SEGUNDOS : TEMPO_LIMITE_FASE1_SEGUNDOS;
+}
 
 async function contarModulos() {
   const res = await db.query(`SELECT COUNT(*)::int AS total FROM modulos`);
@@ -37,14 +44,16 @@ function calcularPontuacao(streakAnterior, acertou) {
 
 // Verifica se o prazo da pergunta ao vivo estourou, comparando com o
 // relógio do servidor — nunca confiando em nada vindo do cliente.
-function tempoEstourado(quizIniciadaEm) {
+function tempoEstourado(quizIniciadaEm, fase) {
   if (!quizIniciadaEm) return true;
   const decorridoMs = Date.now() - new Date(quizIniciadaEm).getTime();
-  return decorridoMs / 1000 >= TEMPO_LIMITE_SEGUNDOS;
+  return decorridoMs / 1000 >= tempoLimiteSegundos(fase);
 }
 
 module.exports = {
-  TEMPO_LIMITE_SEGUNDOS,
+  TEMPO_LIMITE_FASE1_SEGUNDOS,
+  TEMPO_LIMITE_FASE2_SEGUNDOS,
+  tempoLimiteSegundos,
   contarModulos,
   listaFlatDeQuestoes,
   calcularPontuacao,

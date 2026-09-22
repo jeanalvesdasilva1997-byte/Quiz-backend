@@ -78,7 +78,7 @@ async function estadoAoVivo(event) {
       totalPerguntas,
       questaoAtual,
       iniciadaEm: turma.quiz_iniciada_em,
-      tempoLimiteSegundos: gam.TEMPO_LIMITE_SEGUNDOS,
+      tempoLimiteSegundos: gam.tempoLimiteSegundos(turma.quiz_fase),
       totalParticipantes: totalParticipantesRes.rows[0].total,
       responderam: respostas.responderam,
       corretas: respostas.corretas,
@@ -290,7 +290,7 @@ async function estadoParticipante(event) {
       quizEstado: turma.quiz_estado,
       questao,
       iniciadaEm: turma.quiz_iniciada_em,
-      tempoLimiteSegundos: gam.TEMPO_LIMITE_SEGUNDOS,
+      tempoLimiteSegundos: gam.tempoLimiteSegundos(turma.quiz_fase),
       jaRespondida,
     });
   } catch (err) {
@@ -323,7 +323,7 @@ async function responder(event) {
     );
     if (jaRespondida.rows.length > 0) return http.conflict("Você já respondeu esta pergunta.");
 
-    const estourou = gam.tempoEstourado(turma.quiz_iniciada_em);
+    const estourou = gam.tempoEstourado(turma.quiz_iniciada_em, turma.quiz_fase);
 
     const questaoRes = await db.query(`SELECT correta FROM questoes WHERE id = $1`, [questaoId]);
     if (questaoRes.rows.length === 0) return http.notFound("Questão não encontrada.");
