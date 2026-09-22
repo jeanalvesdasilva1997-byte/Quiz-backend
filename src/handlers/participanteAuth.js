@@ -99,7 +99,7 @@ async function efetuarLogin(participante) {
 // `encontrado`, não mais de uma exceção lançada pelo cliente HTTP.
 async function verificarEmail(event) {
   try {
-    const { email: emailInformado, nome } = JSON.parse(event.body || "{}");
+    const { email: emailInformado, nome, empresa } = JSON.parse(event.body || "{}");
     if (!emailInformado) return http.badRequest("Informe o e-mail.");
     const emailTrim = emailInformado.trim();
 
@@ -115,7 +115,8 @@ async function verificarEmail(event) {
     if (!turma) return http.ok({ encontrado: false });
 
     const nomeTrim = (nome || "").trim();
-    if (!nomeTrim) return http.badRequest("Informe seu nome completo.");
+    const empresaTrim = (empresa || "").trim();
+    if (!nomeTrim || !empresaTrim) return http.badRequest("Informe nome e empresa.");
 
     // Corrida rara (ex: duplo clique) — se alguém já inseriu esse e-mail
     // nessa turma entre a busca acima e agora, trata como já encontrado
@@ -129,14 +130,14 @@ async function verificarEmail(event) {
     }
 
     await db.query(
-      `INSERT INTO participantes (turma_id, nome, email, origem, status) VALUES ($1, $2, $3, 'no_dia', 'nao_iniciado')`,
-      [turma.id, nomeTrim, emailTrim]
+      `INSERT INTO participantes (turma_id, nome, email, empresa, origem, status) VALUES ($1, $2, $3, $4, 'no_dia', 'nao_iniciado')`,
+      [turma.id, nomeTrim, emailTrim, empresaTrim]
     );
 
     await db.query(`INSERT INTO log_auditoria (admin_nome_snapshot, acao, alvo) VALUES ($1, $2, $3)`, [
       "Sistema (auto-cadastro)",
       "Auto-cadastro do participante (validação de e-mail temporariamente desativada)",
-      `${nomeTrim} — ${emailTrim} — ${turma.nome}`,
+      `${nomeTrim} — ${empresaTrim} — ${emailTrim} — ${turma.nome}`,
     ]);
 
     return http.ok({ encontrado: true, primeiroAcesso: true });
