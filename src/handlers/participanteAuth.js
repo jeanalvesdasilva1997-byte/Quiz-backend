@@ -79,7 +79,7 @@ async function efetuarLogin(participante) {
 
   await db.query(
     `INSERT INTO log_auditoria (admin_nome_snapshot, acao, alvo) VALUES ($1, $2, $3)`,
-    [participante.nome, "Login confirmado (e-mail + senha)", participante.email]
+    [participante.nome, "Login confirmado", participante.email]
   );
 
   return http.ok(
@@ -184,4 +184,50 @@ async function login(event) {
   }
 }
 
-module.exports = { verificarEmail, definirSenha, login };
+// POST /participante/entrar   { nome, empresa }
+// ⚠️ SUBSTITUI A VALIDAÇÃO POR E-MAIL (22/09/2026) — pedido ao vivo pra
+// tirar o e-mail da tela de login. Sem e-mail não há mais como usar
+// senha (nada pra recuperar/confirmar identidade em outra sessão), então
+// login virou um passo só: identifica por (turma ativa + nome + empresa,
+// sem diferenciar maiúsculas/minúsculas) — acha e reaproveita, ou
+// cadastra na hora — e já entra, sem tela de senha.
+// Reverter depois do evento: voltar o front pro fluxo verificarEmail →
+// definirSenha/login (funções acima, preservadas de propósito).
+async function entrar(event) {
+  try {
+    const { nome, empresa } = JSON.parse(event.body || "{}");
+    const nomeTrim = (nome || "").trim();
+    const empresaTrim = (empresa || "").trim();
+    if (!nomeTrim || !empresaTrim) return http.badRequest("Informe nome e empresa.");
+
+    const turma = await buscarTurmaAtivaUnica();
+    if (!turma) return http.ok({ encontrado: false });
+
+    const existenteRes = await db.query(
+      `SELECT * FROM participantes WHERE turma_id = $1 AND lower(nome) = lower($2) AND lower(empresa) = lower($3) LIMIT 1`,
+      [turma.id, nomeTrim, empresaTrim]
+    );
+    let participante = existenteRes.rows[0];
+
+    if (!participante) {
+      const emailSintetico = `sem-email-${auth.gerarTokenOpaco().slice(0, 16)}@nao-informado.local`;
+      const novo = await db.query(
+        `INSERT INTO participantes (turma_id, nome, email, empresa, origem, status) VALUES ($1, $2, $3, $4, 'no_dia', 'nao_iniciado') RETURNING *`,
+        [turma.id, nomeTrim, emailSintetico, empresaTrim]
+      );
+      participante = novo.rows[0];
+
+      await db.query(`INSERT INTO log_auditoria (admin_nome_snapshot, acao, alvo) VALUES ($1, $2, $3)`, [
+        "Sistema (auto-cadastro)",
+        "Auto-cadastro do participante sem e-mail (nome + empresa)",
+        `${nomeTrim} — ${empresaTrim} — ${turma.nome}`,
+      ]);
+    }
+
+    return efetuarLogin(participante);
+  } catch (err) {
+    return http.serverError(err);
+  }
+}
+
+module.exports = { verificarEmail, definirSenha, login, entrar };
