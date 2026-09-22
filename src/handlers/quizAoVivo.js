@@ -91,6 +91,10 @@ async function estadoAoVivo(event) {
 }
 
 // POST /admin/turmas/:id/quiz/iniciar-fase1
+// Apesar do nome (legado), funciona pra iniciar a fase que a turma já
+// estiver marcada (quiz_fase) — normalmente 0 (vira 1, fluxo padrão),
+// mas também aceita turmas preparadas direto na Fase 2 (ex: quando a
+// Fase 1 é pulada por decisão operacional), sem forçar fase 1.
 async function iniciarFase1(event) {
   try {
     const admin = await sessao.adminAutenticado(event);
@@ -100,20 +104,22 @@ async function iniciarFase1(event) {
     const turma = await buscarTurma(turmaId);
     if (!turma) return http.notFound("Turma não encontrada.");
     if (turma.status !== "ativa") return http.conflict("A turma precisa estar Ativa para iniciar o quiz.");
-    if (turma.quiz_fase !== 0) return http.conflict("A Fase 1 já foi iniciada para esta turma.");
+    if (turma.quiz_estado !== "aguardando") return http.conflict("O quiz já foi iniciado para esta turma.");
 
     const lista = await gam.listaFlatDeQuestoes();
     if (lista.length === 0) return http.conflict("Não há perguntas cadastradas.");
 
+    const faseAlvo = turma.quiz_fase === 0 ? 1 : turma.quiz_fase;
+
     const res = await db.query(
-      `UPDATE turmas SET quiz_fase = 1, quiz_estado = 'pergunta_ativa', quiz_indice_atual = 0,
-              quiz_questao_id = $1, quiz_iniciada_em = now()
-       WHERE id = $2 RETURNING quiz_fase, quiz_estado, quiz_indice_atual, quiz_iniciada_em`,
-      [lista[0].id, turmaId]
+      `UPDATE turmas SET quiz_fase = $1, quiz_estado = 'pergunta_ativa', quiz_indice_atual = 0,
+              quiz_questao_id = $2, quiz_iniciada_em = now()
+       WHERE id = $3 RETURNING quiz_fase, quiz_estado, quiz_indice_atual, quiz_iniciada_em`,
+      [faseAlvo, lista[0].id, turmaId]
     );
 
     await db.query(`INSERT INTO log_auditoria (admin_id, admin_nome_snapshot, acao, alvo) VALUES ($1, $2, $3, $4)`, [
-      admin.admin_id, admin.nome, "Iniciou a Fase 1 do quiz ao vivo", turma.nome,
+      admin.admin_id, admin.nome, `Iniciou a Fase ${faseAlvo} do quiz ao vivo`, turma.nome,
     ]);
 
     return http.ok({ turma: res.rows[0] });
