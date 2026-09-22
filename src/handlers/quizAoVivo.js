@@ -48,16 +48,18 @@ async function estadoAoVivo(event) {
     let respostas = { responderam: 0, corretas: 0 };
     if (turma.quiz_estado === "pergunta_ativa" && turma.quiz_questao_id) {
       const q = lista[turma.quiz_indice_atual];
-      questaoAtual = q
-        ? {
-            id: q.id,
-            topico: q.topico,
-            cenario: q.cenario,
-            pergunta: q.pergunta,
-            alternativas: q.alternativas,
-            correta: q.correta, // visão do host — só aqui é liberado
-          }
-        : null;
+      if (q) {
+        const semente = gam.semeadorAtivacao(turmaId, turma.quiz_questao_id, turma.quiz_iniciada_em);
+        const ordem = gam.ordemAlternativas(q.alternativas.length, semente);
+        questaoAtual = {
+          id: q.id,
+          topico: q.topico,
+          cenario: q.cenario,
+          pergunta: q.pergunta,
+          alternativas: ordem.map((i) => q.alternativas[i]),
+          correta: ordem.indexOf(q.correta), // visão do host — já na ordem exibida, só aqui é liberado
+        };
+      }
 
       const contagem = await db.query(
         `SELECT COUNT(*)::int AS responderam, COUNT(*) FILTER (WHERE correta)::int AS corretas
@@ -282,7 +284,12 @@ async function estadoParticipante(event) {
         `SELECT id, topico, cenario, pergunta, alternativas FROM questoes WHERE id = $1`,
         [turma.quiz_questao_id]
       );
-      questao = qRes.rows[0] || null;
+      if (qRes.rows[0]) {
+        const q = qRes.rows[0];
+        const semente = gam.semeadorAtivacao(turma.id, turma.quiz_questao_id, turma.quiz_iniciada_em);
+        const ordem = gam.ordemAlternativas(q.alternativas.length, semente);
+        questao = { ...q, alternativas: ordem.map((i) => q.alternativas[i]) };
+      }
 
       const respondidaRes = await db.query(
         `SELECT 1 FROM respostas WHERE participante_id = $1 AND questao_id = $2 AND fase = $3`,
@@ -331,11 +338,20 @@ async function responder(event) {
 
     const estourou = gam.tempoEstourado(turma.quiz_iniciada_em, turma.quiz_fase);
 
-    const questaoRes = await db.query(`SELECT correta FROM questoes WHERE id = $1`, [questaoId]);
+    const questaoRes = await db.query(`SELECT alternativas, correta FROM questoes WHERE id = $1`, [questaoId]);
     if (questaoRes.rows.length === 0) return http.notFound("Questão não encontrada.");
-    const { correta: indiceCorreto } = questaoRes.rows[0];
+    const { alternativas, correta: indiceCorreto } = questaoRes.rows[0];
 
-    const acertou = !estourou && Number(alternativaSelecionada) === indiceCorreto;
+    // alternativaSelecionada veio na ordem embaralhada que o participante
+    // viu na tela — precisa voltar pro índice original (o mesmo que
+    // questoes.correta usa) antes de comparar e de gravar em respostas,
+    // senão a correção fica errada e o histórico vira refém da ordem
+    // daquela rodada específica.
+    const semente = gam.semeadorAtivacao(turma.id, questaoId, turma.quiz_iniciada_em);
+    const ordem = gam.ordemAlternativas(alternativas.length, semente);
+    const alternativaOriginal = estourou ? null : ordem[Number(alternativaSelecionada)];
+
+    const acertou = !estourou && alternativaOriginal === indiceCorreto;
     const { pontos, novoStreak } = gam.calcularPontuacao(p.streak_fase, acertou);
     const melhorStreak = Math.max(p.melhor_streak, novoStreak);
     const colunaXp = turma.quiz_fase === 1 ? "xp_fase1" : "xp_fase2";
@@ -344,7 +360,7 @@ async function responder(event) {
       await client.query(
         `INSERT INTO respostas (participante_id, questao_id, fase, alternativa_selecionada, correta, pontos, streak_no_momento, tempo_esgotado)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [p.id, questaoId, turma.quiz_fase, estourou ? null : alternativaSelecionada, acertou, pontos, novoStreak, estourou]
+        [p.id, questaoId, turma.quiz_fase, alternativaOriginal, acertou, pontos, novoStreak, estourou]
       );
       await client.query(
         `UPDATE participantes
