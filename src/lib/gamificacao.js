@@ -100,6 +100,18 @@ function ordemAlternativas(tamanho, semente) {
   return ordem;
 }
 
+// =====================================================================
+// Fase 2 "cada um no seu ritmo" (22/09) — sem host, sem pergunta única
+// pra turma toda: cada participante avança sozinho pela lista, na hora
+// que quiser, até o prazo abaixo. Prazo = 23:59:59 do dia de
+// turmas.data_evento, no horário de Brasília (UTC-3, fixo — sem horário
+// de verão desde 2019).
+// =====================================================================
+function prazoFase2(dataEvento) {
+  const d = new Date(dataEvento);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23 + 3, 59, 59));
+}
+
 module.exports = {
   TEMPO_LIMITE_FASE1_SEGUNDOS,
   TEMPO_LIMITE_FASE2_SEGUNDOS,
@@ -110,4 +122,5 @@ module.exports = {
   tempoEstourado,
   semeadorAtivacao,
   ordemAlternativas,
+  prazoFase2,
 };
