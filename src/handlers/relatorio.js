@@ -21,11 +21,15 @@ const STATUS_LABEL = {
 // Ranking final ordena pela Fase 2 — não existe soma das duas fases,
 // a pontuação total não tem relevância pra classificação. Fase 1 e
 // Fase 2 continuam expostas lado a lado só como acompanhamento.
+// conclusao_em = horário da última resposta da Fase 2 (quando a pessoa
+// respondeu a última pergunta pendente) — só existe pra quem chegou a
+// concluir; os demais vêm NULL.
 async function carregarParticipantesOrdenados(turmaId) {
   const res = await db.query(
-    `SELECT nome, email, empresa, cnpj, xp_fase1, xp_fase2, melhor_streak, status, consentimento_nera
-     FROM participantes WHERE turma_id = $1
-     ORDER BY xp_fase2 DESC, melhor_streak DESC`,
+    `SELECT p.nome, p.email, p.empresa, p.cnpj, p.xp_fase1, p.xp_fase2, p.melhor_streak, p.status, p.consentimento_nera,
+            (SELECT MAX(r.respondido_em) FROM respostas r WHERE r.participante_id = p.id AND r.fase = 2) AS conclusao_em
+     FROM participantes p WHERE p.turma_id = $1
+     ORDER BY p.xp_fase2 DESC, p.melhor_streak DESC`,
     [turmaId]
   );
   return res.rows;
@@ -89,23 +93,24 @@ async function gerarXlsxBuffer(turmaNome, dataEvento, participantes) {
     { key: "fase2", width: 13 },
     { key: "streak", width: 15 },
     { key: "permissao", width: 18 },
+    { key: "conclusao", width: 20 },
   ];
 
-  sheet.mergeCells("A1:I1");
+  sheet.mergeCells("A1:J1");
   const titulo = sheet.getCell("A1");
   titulo.value = `Conversas de Conforto Habitat — Controle de Participantes — ${turmaNome}`;
   titulo.font = { name: "Arial", size: 16, bold: true, color: { argb: DARK } };
   titulo.alignment = { vertical: "middle" };
   sheet.getRow(1).height = 30;
 
-  sheet.mergeCells("A2:I2");
+  sheet.mergeCells("A2:J2");
   const subtitulo = sheet.getCell("A2");
   const dataFormatada = dataEvento ? new Date(dataEvento).toLocaleDateString("pt-BR") : "—";
   subtitulo.value = `Data do evento: ${dataFormatada} — Gerado em ${new Date().toLocaleString("pt-BR")} — ${participantes.length} participante(s)`;
   subtitulo.font = { name: "Arial", size: 10, italic: true, color: { argb: GRAY } };
   sheet.getRow(2).height = 18;
 
-  const headerRow = sheet.addRow(["Ranking", "Nome", "E-mail", "Empresa", "Status", "Pontuação Fase 1", "Pontuação Fase 2", "Melhor Streak", "Permissão"]);
+  const headerRow = sheet.addRow(["Ranking", "Nome", "E-mail", "Empresa", "Status", "Pontuação Fase 1", "Pontuação Fase 2", "Melhor Streak", "Permissão", "Concluiu em"]);
   headerRow.height = 24;
   headerRow.eachCell((cell) => {
     cell.font = { name: "Arial", bold: true, color: { argb: "FFFFFFFF" } };
@@ -115,6 +120,12 @@ async function gerarXlsxBuffer(turmaNome, dataEvento, participantes) {
 
   participantes.forEach((p, i) => {
     const ranking = i + 1;
+    // Só é "conclusão" de fato se a pessoa terminou as 10 perguntas
+    // (status concluido) — senão o horário existe (última resposta dada)
+    // mas não representa ter finalizado.
+    const conclusaoTexto = p.status === "concluido" && p.conclusao_em
+      ? new Date(p.conclusao_em).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+      : "—";
     const row = sheet.addRow([
       ranking,
       p.nome,
@@ -125,11 +136,12 @@ async function gerarXlsxBuffer(turmaNome, dataEvento, participantes) {
       p.xp_fase2,
       p.melhor_streak,
       labelPermissao(p.consentimento_nera),
+      conclusaoTexto,
     ]);
     row.height = 20;
 
     const zebra = i % 2 === 1;
-    const colunasCentralizadas = [1, 6, 7, 8, 9];
+    const colunasCentralizadas = [1, 6, 7, 8, 9, 10];
     row.eachCell((cell, colNumber) => {
       cell.font = { name: "Arial", size: 11, color: { argb: DARK } };
       cell.alignment = { vertical: "middle", horizontal: colunasCentralizadas.includes(colNumber) ? "center" : "left" };
@@ -157,7 +169,7 @@ async function gerarXlsxBuffer(turmaNome, dataEvento, participantes) {
     }
   });
 
-  sheet.autoFilter = { from: "A3", to: "I3" };
+  sheet.autoFilter = { from: "A3", to: "J3" };
 
   return wb.xlsx.writeBuffer();
 }
