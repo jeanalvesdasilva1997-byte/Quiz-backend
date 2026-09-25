@@ -19,26 +19,12 @@ const gam = require("../lib/gamificacao");
 
 async function buscarTurma(turmaId) {
   const res = await db.query(
-    `SELECT id, nome, status, data_evento, quiz_fase, quiz_estado, quiz_indice_atual, quiz_questao_id, quiz_iniciada_em,
+    `SELECT id, nome, status, quiz_fase, quiz_estado, quiz_indice_atual, quiz_questao_id, quiz_iniciada_em,
             podio1_liberado, podio2_liberado
      FROM turmas WHERE id = $1`,
     [turmaId]
   );
   return res.rows[0] || null;
-}
-
-// Fase 2 "cada um no seu ritmo" (22/09) — sem host, ver gamificacao.js.
-// Independe de turma.quiz_estado/quiz_questao_id (que ficam inertes
-// nesse modo); cada participante progride pela lista conforme o que já
-// respondeu em respostas (fase = 2).
-async function proximaQuestaoFase2(participanteId) {
-  const lista = await gam.listaFlatDeQuestoes();
-  const respondidasRes = await db.query(
-    `SELECT questao_id FROM respostas WHERE participante_id = $1 AND fase = 2`,
-    [participanteId]
-  );
-  const respondidas = new Set(respondidasRes.rows.map((r) => r.questao_id));
-  return lista.find((q) => !respondidas.has(q.id)) || null;
 }
 
 // =====================================================================
@@ -57,30 +43,6 @@ async function estadoAoVivo(event) {
 
     const lista = await gam.listaFlatDeQuestoes();
     const totalPerguntas = lista.length;
-
-    if (turma.quiz_fase === 2) {
-      const totalParticipantesRes = await db.query(`SELECT COUNT(*)::int AS total FROM participantes WHERE turma_id = $1`, [turmaId]);
-      const progressoRes = await db.query(
-        `SELECT participante_id, COUNT(*)::int AS respondidas FROM respostas
-         WHERE fase = 2 AND participante_id IN (SELECT id FROM participantes WHERE turma_id = $1)
-         GROUP BY participante_id`,
-        [turmaId]
-      );
-      const emAndamento = progressoRes.rows.filter((r) => r.respondidas > 0 && r.respondidas < totalPerguntas).length;
-      const concluidos = progressoRes.rows.filter((r) => r.respondidas >= totalPerguntas).length;
-
-      return http.ok({
-        turma: { id: turma.id, nome: turma.nome, status: turma.status },
-        fase: 2,
-        modoAutoPaced: true,
-        prazo: gam.prazoFase2(turma.data_evento).toISOString(),
-        totalPerguntas,
-        totalParticipantes: totalParticipantesRes.rows[0].total,
-        emAndamento,
-        concluidos,
-        podio2Liberado: turma.podio2_liberado,
-      });
-    }
 
     let questaoAtual = null;
     let respostas = { responderam: 0, corretas: 0 };
@@ -315,39 +277,6 @@ async function estadoParticipante(event) {
     const turma = await buscarTurma(p.turma_id);
     if (!turma) return http.notFound("Turma não encontrada.");
 
-    if (turma.quiz_fase === 2) {
-      const prazo = gam.prazoFase2(turma.data_evento);
-      const prazoEncerrado = Date.now() > prazo.getTime();
-      const proxima = await proximaQuestaoFase2(p.id);
-
-      let questaoFase2 = null;
-      let quizEstadoFase2;
-      if (!proxima) {
-        quizEstadoFase2 = "fase2_concluida";
-      } else if (prazoEncerrado) {
-        quizEstadoFase2 = "prazo_encerrado";
-      } else {
-        quizEstadoFase2 = "pergunta_ativa";
-        const ordem = gam.ordemAlternativas(proxima.alternativas.length, `${p.id}:${proxima.id}`);
-        questaoFase2 = {
-          id: proxima.id,
-          topico: proxima.topico,
-          cenario: proxima.cenario,
-          pergunta: proxima.pergunta,
-          alternativas: ordem.map((i) => proxima.alternativas[i]),
-        };
-      }
-
-      return http.ok({
-        fase: 2,
-        modoAutoPaced: true,
-        quizEstado: quizEstadoFase2,
-        questao: questaoFase2,
-        prazo: prazo.toISOString(),
-        jaRespondida: false,
-      });
-    }
-
     let questao = null;
     let jaRespondida = false;
     if (turma.quiz_estado === "pergunta_ativa" && turma.quiz_questao_id) {
@@ -382,49 +311,6 @@ async function estadoParticipante(event) {
   }
 }
 
-// Fase 2 "cada um no seu ritmo" — sem cronômetro por pergunta; o corte é
-// o prazo geral (gam.prazoFase2). Ignora turma.quiz_questao_id (não
-// existe pergunta "ativa" compartilhada nesse modo).
-async function responderFase2AutoPaced(turma, p, questaoId, alternativaSelecionada) {
-  const prazo = gam.prazoFase2(turma.data_evento);
-  if (Date.now() > prazo.getTime()) return http.conflict("O prazo para responder já encerrou.");
-
-  const jaRespondida = await db.query(
-    `SELECT 1 FROM respostas WHERE participante_id = $1 AND questao_id = $2 AND fase = 2`,
-    [p.id, questaoId]
-  );
-  if (jaRespondida.rows.length > 0) return http.conflict("Você já respondeu esta pergunta.");
-
-  const questaoRes = await db.query(`SELECT alternativas, correta FROM questoes WHERE id = $1`, [questaoId]);
-  if (questaoRes.rows.length === 0) return http.notFound("Questão não encontrada.");
-  const { alternativas, correta: indiceCorreto } = questaoRes.rows[0];
-
-  const ordem = gam.ordemAlternativas(alternativas.length, `${p.id}:${questaoId}`);
-  const alternativaOriginal = ordem[Number(alternativaSelecionada)];
-  const acertou = alternativaOriginal === indiceCorreto;
-  const { pontos, novoStreak } = gam.calcularPontuacao(p.streak_fase, acertou);
-  const melhorStreak = Math.max(p.melhor_streak, novoStreak);
-
-  await db.withTransaction(async (client) => {
-    await client.query(
-      `INSERT INTO respostas (participante_id, questao_id, fase, alternativa_selecionada, correta, pontos, streak_no_momento, tempo_esgotado)
-       VALUES ($1, $2, 2, $3, $4, $5, $6, FALSE)`,
-      [p.id, questaoId, alternativaOriginal, acertou, pontos, novoStreak]
-    );
-    await client.query(
-      `UPDATE participantes SET xp_fase2 = xp_fase2 + $1, streak_fase = $2, melhor_streak = $3, status = 'em_curso' WHERE id = $4`,
-      [pontos, novoStreak, melhorStreak, p.id]
-    );
-  });
-
-  const restam = await proximaQuestaoFase2(p.id);
-  if (!restam) {
-    await db.query(`UPDATE participantes SET status = 'concluido' WHERE id = $1`, [p.id]);
-  }
-
-  return http.ok({ resultado: acertou ? "correto" : "incorreto", pontosGanhos: pontos });
-}
-
 // POST /participante/responder   { questaoId, alternativaSelecionada }
 async function responder(event) {
   try {
@@ -440,11 +326,6 @@ async function responder(event) {
     const turma = await buscarTurma(p.turma_id);
     if (!turma) return http.notFound("Turma não encontrada.");
     if (turma.status !== "ativa") return http.conflict("A turma foi encerrada — não é mais possível responder.");
-
-    if (turma.quiz_fase === 2) {
-      return responderFase2AutoPaced(turma, p, questaoId, alternativaSelecionada);
-    }
-
     if (turma.quiz_estado !== "pergunta_ativa" || turma.quiz_questao_id !== questaoId) {
       return http.conflict("Esta não é a pergunta ativa no momento.");
     }
