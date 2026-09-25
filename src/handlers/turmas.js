@@ -2,12 +2,21 @@
 // handlers/turmas.js — Turmas: listar (com filtro), criar via upload
 // =====================================================================
 
+const auth = require("../lib/auth");
 const db = require("../lib/db");
 const email = require("../lib/email");
 const http = require("../lib/http");
 const sessao = require("../lib/sessao");
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// E-mail é opcional desde que o login do participante passou a ser por
+// nome + empresa (ver participanteAuth.entrar). A coluna continua NOT NULL
+// e única por turma, então quem vem sem e-mail ganha o mesmo e-mail
+// sintético usado no auto-cadastro, e não recebe o link do portal.
+function emailSintetico() {
+  return `sem-email-${auth.gerarTokenOpaco().slice(0, 16)}@nao-informado.local`;
+}
 
 // GET /admin/turmas?status=ativa   (status é opcional — Todas / Ativa / Agendada / Encerrada)
 async function listar(event) {
@@ -61,17 +70,23 @@ async function conferir(event) {
       const empresa = (linha.empresa || "").trim();
       const cnpj = (linha.cnpj || "").trim();
 
-      if (!nome || !EMAIL_REGEX.test(emailLinha)) {
-        erros.push({ linha: idx + 1, nome, email: emailLinha, motivo: !EMAIL_REGEX.test(emailLinha) ? "e-mail inválido" : "linha incompleta" });
+      if (!nome) {
+        erros.push({ linha: idx + 1, nome, email: emailLinha, motivo: "linha incompleta" });
         return;
       }
-      const chave = emailLinha.toLowerCase();
+      if (emailLinha && !EMAIL_REGEX.test(emailLinha)) {
+        erros.push({ linha: idx + 1, nome, email: emailLinha, motivo: "e-mail inválido" });
+        return;
+      }
+      // Sem e-mail, o login identifica por nome + empresa, então é esse
+      // par que não pode se repetir na lista.
+      const chave = emailLinha ? "email:" + emailLinha.toLowerCase() : "nome:" + nome.toLowerCase() + "|" + empresa.toLowerCase();
       if (vistos.has(chave)) {
-        erros.push({ linha: idx + 1, nome, email: emailLinha, motivo: "e-mail duplicado" });
+        erros.push({ linha: idx + 1, nome, email: emailLinha, motivo: emailLinha ? "e-mail duplicado" : "participante duplicado" });
         return;
       }
       vistos.add(chave);
-      validos.push({ nome, email: emailLinha, empresa: empresa || null, cnpj: cnpj || null });
+      validos.push({ nome, email: emailLinha || null, empresa: empresa || null, cnpj: cnpj || null });
     });
 
     return http.ok({ validos, erros });
@@ -99,11 +114,11 @@ async function criar(event) {
       const novaTurma = turmaRes.rows[0];
 
       for (const p of participantes || []) {
-        const pTrim = { nome: (p.nome || "").trim(), email: (p.email || "").trim(), empresa: (p.empresa || "").trim() || null, cnpj: (p.cnpj || "").trim() || null };
+        const pTrim = { nome: (p.nome || "").trim(), email: (p.email || "").trim() || null, empresa: (p.empresa || "").trim() || null, cnpj: (p.cnpj || "").trim() || null };
         await client.query(
           `INSERT INTO participantes (turma_id, nome, email, empresa, cnpj, origem, status)
            VALUES ($1, $2, $3, $4, $5, 'lista', 'nao_iniciado')`,
-          [novaTurma.id, pTrim.nome, pTrim.email, pTrim.empresa, pTrim.cnpj]
+          [novaTurma.id, pTrim.nome, pTrim.email || emailSintetico(), pTrim.empresa, pTrim.cnpj]
         );
         participantesTrim.push(pTrim);
       }
@@ -122,7 +137,7 @@ async function criar(event) {
       console.warn("PARTICIPANT_FRONTEND_URL ausente — e-mail de acesso não enviado aos participantes da turma.");
     } else {
       await Promise.allSettled(
-        participantesTrim.map((p) => email.enviarLinkPortalParticipante(p.email, p.nome, turma.nome, turma.data_evento, linkPortal))
+        participantesTrim.filter((p) => p.email).map((p) => email.enviarLinkPortalParticipante(p.email, p.nome, turma.nome, turma.data_evento, linkPortal))
       );
     }
 
