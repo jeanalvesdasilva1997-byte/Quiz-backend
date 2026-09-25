@@ -2,10 +2,13 @@
 // handlers/participantesAdmin.js — Cadastro no dia e liberação manual
 // =====================================================================
 
+const auth = require("../lib/auth");
 const db = require("../lib/db");
 const email = require("../lib/email");
 const http = require("../lib/http");
 const sessao = require("../lib/sessao");
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // POST /admin/cadastro-no-dia   { turmaId, nome, email, empresa, cnpj }
 // A turma é sempre selecionada explicitamente — correção do bug apontado
@@ -16,18 +19,32 @@ async function cadastroNoDia(event) {
     if (!admin) return http.unauthorized();
 
     const { turmaId, nome, email: emailParticipante, empresa, cnpj } = JSON.parse(event.body || "{}");
-    if (!turmaId || !nome || !emailParticipante) return http.badRequest("Informe turma, nome e e-mail.");
-
-    const nomeTrim = nome.trim();
-    const emailTrim = emailParticipante.trim();
+    const nomeTrim = (nome || "").trim();
+    const emailTrim = (emailParticipante || "").trim();
     const empresaTrim = (empresa || "").trim();
     const cnpjTrim = (cnpj || "").trim();
+    if (!turmaId || !nomeTrim) return http.badRequest("Informe turma e nome.");
+    if (emailTrim && !EMAIL_REGEX.test(emailTrim)) return http.badRequest("E-mail inválido.");
 
-    const dup = await db.query(
-      `SELECT id FROM participantes WHERE turma_id = $1 AND lower(email) = lower($2)`,
-      [turmaId, emailTrim]
-    );
-    if (dup.rows.length > 0) return http.conflict("Esse e-mail já está cadastrado nesta turma.");
+    // E-mail é opcional (o login do participante é por nome + empresa).
+    // Sem e-mail, a duplicidade é checada por nome + empresa, o mesmo par
+    // que o login usa pra achar a pessoa.
+    if (emailTrim) {
+      const dup = await db.query(
+        `SELECT id FROM participantes WHERE turma_id = $1 AND lower(email) = lower($2)`,
+        [turmaId, emailTrim]
+      );
+      if (dup.rows.length > 0) return http.conflict("Esse e-mail já está cadastrado nesta turma.");
+    } else {
+      const dup = await db.query(
+        `SELECT id FROM participantes WHERE turma_id = $1 AND lower(nome) = lower($2) AND lower(coalesce(empresa, '')) = lower($3)`,
+        [turmaId, nomeTrim, empresaTrim]
+      );
+      if (dup.rows.length > 0) return http.conflict("Esse participante já está cadastrado nesta turma.");
+    }
+    // A coluna segue NOT NULL e única por turma: sem e-mail, grava o mesmo
+    // e-mail sintético do auto-cadastro (ver participanteAuth.entrar).
+    const emailGravado = emailTrim || `sem-email-${auth.gerarTokenOpaco().slice(0, 16)}@nao-informado.local`;
 
     // Grava primeiro, confirma, só então envia o e-mail — nunca na ordem
     // inversa (evita mandar um link válido para um cadastro que falhou ao salvar).
@@ -35,14 +52,16 @@ async function cadastroNoDia(event) {
       const res = await client.query(
         `INSERT INTO participantes (turma_id, nome, email, empresa, cnpj, origem, status)
          VALUES ($1, $2, $3, $4, $5, 'no_dia', 'nao_iniciado') RETURNING *`,
-        [turmaId, nomeTrim, emailTrim, empresaTrim || null, cnpjTrim || null]
+        [turmaId, nomeTrim, emailGravado, empresaTrim || null, cnpjTrim || null]
       );
       return res.rows[0];
     });
 
     const turmaRes = await db.query(`SELECT nome, data_evento FROM turmas WHERE id = $1`, [turmaId]);
     const linkPortal = process.env.PARTICIPANT_FRONTEND_URL;
-    if (!linkPortal) {
+    if (!emailTrim) {
+      // Sem e-mail informado: não há para onde mandar o link do portal.
+    } else if (!linkPortal) {
       console.warn("PARTICIPANT_FRONTEND_URL ausente — e-mail de acesso não enviado ao participante.");
     } else {
       await email.enviarLinkPortalParticipante(emailTrim, nomeTrim, turmaRes.rows[0].nome, turmaRes.rows[0].data_evento, linkPortal);
