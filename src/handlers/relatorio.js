@@ -26,21 +26,13 @@ const STATUS_LABEL = {
 // concluir; os demais vêm NULL.
 async function carregarParticipantesOrdenados(turmaId) {
   const res = await db.query(
-    `SELECT p.nome, p.email, p.empresa, p.cnpj, p.xp_fase1, p.xp_fase2, p.melhor_streak, p.status, p.consentimento_nera,
+    `SELECT p.nome, p.email, p.empresa, p.cnpj, p.xp_fase1, p.xp_fase2, p.melhor_streak, p.status,
             (SELECT MAX(r.respondido_em) FROM respostas r WHERE r.participante_id = p.id AND r.fase = 2) AS conclusao_em
      FROM participantes p WHERE p.turma_id = $1
      ORDER BY p.xp_fase2 DESC, p.melhor_streak DESC`,
     [turmaId]
   );
   return res.rows;
-}
-
-// Binário por decisão de negócio: só autorização explícita (TRUE) conta
-// como "Sim". Recusa explícita (FALSE) e ausência de resposta (NULL —
-// inclui quem nunca chegou a fazer login) contam como "Não", já que
-// nenhuma das duas é uma autorização de fato.
-function labelPermissao(consentimentoNera) {
-  return consentimentoNera === true ? "Sim" : "Não";
 }
 
 // GET /admin/relatorio/:turmaId
@@ -71,14 +63,14 @@ async function gerar(event) {
 
 // GET /admin/relatorio/:turmaId/xlsx   — somente Owner (controle formatado)
 async function gerarXlsxBuffer(turmaNome, dataEvento, participantes) {
-  const ORANGE = "FFF5811E";
+  const GOLD = "FFB5966A";
   const DARK = "FF1A1A1A";
   const LIGHT_ROW = "FFF7F6F3";
   const GREEN = "FF7FA66B";
   const GRAY = "FF8A8377";
 
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Conversas de Conforto Habitat";
+  wb.creator = "Nera Treinamento";
   wb.created = new Date();
 
   const sheet = wb.addWorksheet("Participantes", { views: [{ state: "frozen", ySplit: 3 }] });
@@ -92,29 +84,28 @@ async function gerarXlsxBuffer(turmaNome, dataEvento, participantes) {
     { key: "fase1", width: 13 },
     { key: "fase2", width: 13 },
     { key: "streak", width: 15 },
-    { key: "permissao", width: 18 },
     { key: "conclusao", width: 20 },
   ];
 
-  sheet.mergeCells("A1:J1");
+  sheet.mergeCells("A1:I1");
   const titulo = sheet.getCell("A1");
-  titulo.value = `Conversas de Conforto Habitat — Controle de Participantes — ${turmaNome}`;
+  titulo.value = `Nera Treinamento | Controle de Participantes | ${turmaNome}`;
   titulo.font = { name: "Arial", size: 16, bold: true, color: { argb: DARK } };
   titulo.alignment = { vertical: "middle" };
   sheet.getRow(1).height = 30;
 
-  sheet.mergeCells("A2:J2");
+  sheet.mergeCells("A2:I2");
   const subtitulo = sheet.getCell("A2");
   const dataFormatada = dataEvento ? new Date(dataEvento).toLocaleDateString("pt-BR") : "—";
   subtitulo.value = `Data do evento: ${dataFormatada} — Gerado em ${new Date().toLocaleString("pt-BR")} — ${participantes.length} participante(s)`;
   subtitulo.font = { name: "Arial", size: 10, italic: true, color: { argb: GRAY } };
   sheet.getRow(2).height = 18;
 
-  const headerRow = sheet.addRow(["Ranking", "Nome", "E-mail", "Empresa", "Status", "Pontuação Fase 1", "Pontuação Fase 2", "Melhor Streak", "Permissão", "Concluiu em"]);
+  const headerRow = sheet.addRow(["Ranking", "Nome", "E-mail", "Empresa", "Status", "Pontuação Fase 1", "Pontuação Fase 2", "Melhor Streak", "Concluiu em"]);
   headerRow.height = 24;
   headerRow.eachCell((cell) => {
     cell.font = { name: "Arial", bold: true, color: { argb: "FFFFFFFF" } };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ORANGE } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GOLD } };
     cell.alignment = { vertical: "middle", horizontal: "center" };
   });
 
@@ -135,13 +126,12 @@ async function gerarXlsxBuffer(turmaNome, dataEvento, participantes) {
       p.xp_fase1,
       p.xp_fase2,
       p.melhor_streak,
-      labelPermissao(p.consentimento_nera),
       conclusaoTexto,
     ]);
     row.height = 20;
 
     const zebra = i % 2 === 1;
-    const colunasCentralizadas = [1, 6, 7, 8, 9, 10];
+    const colunasCentralizadas = [1, 6, 7, 8, 9];
     row.eachCell((cell, colNumber) => {
       cell.font = { name: "Arial", size: 11, color: { argb: DARK } };
       cell.alignment = { vertical: "middle", horizontal: colunasCentralizadas.includes(colNumber) ? "center" : "left" };
@@ -153,23 +143,18 @@ async function gerarXlsxBuffer(turmaNome, dataEvento, participantes) {
     if (p.status === "concluido") {
       statusCell.font = { name: "Arial", size: 11, bold: true, color: { argb: GREEN } };
     } else if (p.status === "em_curso") {
-      statusCell.font = { name: "Arial", size: 11, bold: true, color: { argb: ORANGE } };
+      statusCell.font = { name: "Arial", size: 11, bold: true, color: { argb: GOLD } };
     } else {
       statusCell.font = { name: "Arial", size: 11, color: { argb: GRAY } };
     }
 
-    const permissaoCell = row.getCell(9);
-    permissaoCell.font = p.consentimento_nera === true
-      ? { name: "Arial", size: 11, bold: true, color: { argb: GREEN } }
-      : { name: "Arial", size: 11, color: { argb: GRAY } };
-
     if (ranking <= 3) {
-      row.getCell(1).font = { name: "Arial", bold: true, color: { argb: ORANGE } };
+      row.getCell(1).font = { name: "Arial", bold: true, color: { argb: GOLD } };
       row.getCell(7).font = { name: "Arial", bold: true, color: { argb: DARK } }; // Fase 2 — critério do ranking
     }
   });
 
-  sheet.autoFilter = { from: "A3", to: "J3" };
+  sheet.autoFilter = { from: "A3", to: "I3" };
 
   return wb.xlsx.writeBuffer();
 }
